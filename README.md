@@ -462,10 +462,150 @@ See [docs/PACKAGING.md](docs/PACKAGING.md) for detailed build instructions.
 3. Review backup provider setting (internal/external/disabled)
 
 ### Connection Issues
-1. Verify firewall allows server port (default 25565)
-2. Configure router port forwarding if behind NAT
-3. Use `nslookup` to check if DNS resolves correctly
-4. Test with direct IP:port before using domain
+
+**Players cannot connect to your server? Follow these steps:**
+
+#### 1. Verify Server Configuration
+```bash
+# Check server.properties configuration
+# Look for these settings in servers/<name>/server/server.properties:
+server-ip=0.0.0.0        # Allow external connections (or leave empty)
+server-port=25565        # Default port, must match your DNS settings
+online-mode=true         # Set to false only for offline/cracked servers
+```
+
+The framework will check this automatically on startup and warn you if misconfigured.
+
+#### 2. Test DNS Resolution
+```bash
+# Test DNS configuration
+python -m app.main dns test <server-name>
+
+# Manually check DNS with nslookup (Windows)
+nslookup mc.yourdomain.com
+
+# Should return your public IP address
+```
+
+#### 3. Firewall Configuration
+
+**Windows Defender Firewall:**
+```powershell
+# Allow Java through Windows Firewall (run as Administrator)
+New-NetFirewallRule -DisplayName "Minecraft Server" -Direction Inbound -Program "C:\Program Files\Java\jdk-21\bin\java.exe" -Action Allow
+
+# Or allow specific port
+New-NetFirewallRule -DisplayName "Minecraft Port 25565" -Direction Inbound -LocalPort 25565 -Protocol TCP -Action Allow
+New-NetFirewallRule -DisplayName "Minecraft Port 25565 UDP" -Direction Inbound -LocalPort 25565 -Protocol UDP -Action Allow
+```
+
+#### 4. Router Port Forwarding
+
+If your server is behind a router (most home networks):
+
+1. Find your local IP address:
+   ```powershell
+   ipconfig
+   # Look for "IPv4 Address" under your active network adapter
+   ```
+
+2. Login to your router admin panel (usually http://192.168.1.1 or http://192.168.0.1)
+
+3. Navigate to "Port Forwarding" or "Virtual Server" settings
+
+4. Add new rule:
+   - **Service Name**: Minecraft Server
+   - **External Port**: 25565
+   - **Internal IP**: Your computer's local IP (from step 1)
+   - **Internal Port**: 25565
+   - **Protocol**: TCP/UDP or Both
+
+5. Save and restart router if required
+
+#### 5. ISP Restrictions
+
+Some ISPs block common server ports or don't allow hosting:
+
+```bash
+# Test if your ISP allows port 25565
+# Use online port checker: https://www.yougetsignal.com/tools/open-ports/
+
+# Alternative: Use non-standard port
+# Edit servers/<name>/server/server.properties:
+server-port=25566        # Or any port above 1024
+
+# Update server.yml:
+dns:
+  server_port: 25566
+  srv_record:
+    port: 25566
+```
+
+#### 6. Connection Testing Checklist
+
+Test connections in this order:
+
+✅ **Local Connection** (same computer):
+```
+Direct Connect: localhost:25565
+```
+
+✅ **LAN Connection** (same network):
+```
+Direct Connect: <your-local-ip>:25565
+Example: 192.168.1.100:25565
+```
+
+✅ **External Connection** (internet):
+```
+Direct Connect: <your-public-ip>:25565
+Get public IP: https://api.ipify.org
+
+Then test domain:
+Direct Connect: mc.yourdomain.com
+```
+
+#### 7. Common Error Messages
+
+**"Connection timed out"**
+- Firewall blocking connection
+- Router port forwarding not configured
+- Server not running or wrong port
+
+**"Connection refused"**  
+- Server not running
+- Wrong port number
+- server-ip set to localhost/127.0.0.1
+
+**"Unknown host"**
+- DNS not propagated yet (wait 5-10 minutes after DNS update)
+- Domain name typo
+- DNS update failed (check `dns test` output)
+
+**"Outdated client/server"**
+- Minecraft version mismatch between server and client
+- Not a connection issue
+
+#### 8. Generate Diagnostic Report
+
+```bash
+# Check server status
+python -m app.main status <server-name>
+
+# View DNS status
+python -m app.main dns status <server-name>
+
+# Test DNS connection
+python -m app.main dns test <server-name>
+
+# Check server logs
+python -m app.main logs <server-name> --lines 100
+```
+
+**Still not working?** Check:
+- Server logs: `servers/<name>/server/logs/latest.log`
+- Framework logs: `servers/<name>/runtime/session.log`
+- Crash reports: `servers/<name>/server/crash-reports/`
 
 ## License
 

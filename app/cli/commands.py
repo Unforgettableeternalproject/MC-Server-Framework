@@ -117,7 +117,10 @@ def init(server_name: str):
 
 
 @app.command()
-def start(server_name: str):
+def start(
+    server_name: str,
+    attach: bool = typer.Option(False, "--attach", "-a", help="附加到終端，顯示即時日誌")
+):
     """啟動伺服器"""
     from ..core.launcher import ServerLauncher
     from ..utils.yaml_loader import load_server_config
@@ -140,8 +143,10 @@ def start(server_name: str):
     launcher = ServerLauncher(config, java_resolver)
     
     console.print(f"啟動伺服器: {server_name}")
-    if launcher.start():
-        console.print(f"[green]✓ 伺服器已啟動 (PID: {launcher.status.pid})[/green]")
+    if launcher.start(attach=attach):
+        if not attach:
+            console.print(f"[green]✓ 伺服器已在背景啟動 (PID: {launcher.status.pid})[/green]")
+            console.print(f"\n提示: 使用 'python -m app.main logs {server_name} --follow' 查看即時日誌")
     else:
         console.print("[red]啟動失敗[/red]")
         raise typer.Exit(1)
@@ -173,6 +178,80 @@ def stop(server_name: str):
         console.print("[green]✓ 伺服器已停止[/green]")
     else:
         console.print("[red]停止失敗[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def logs(
+    server_name: str,
+    follow: bool = typer.Option(False, "--follow", "-f", help="跟隨即時日誌（類似 tail -f）"),
+    lines: int = typer.Option(50, "--lines", "-n", help="顯示最後 N 行日誌")
+):
+    """查看伺服器日誌"""
+    from ..utils.yaml_loader import load_server_config
+    from ..core.path_resolver import PathResolver
+    import time
+    
+    scanner = get_scanner()
+    instance_path = scanner.find_instance(server_name)
+    
+    if not instance_path:
+        console.print(f"[red]錯誤: 找不到伺服器 '{server_name}'[/red]")
+        raise typer.Exit(1)
+    
+    config = load_server_config(instance_path)
+    if not config:
+        console.print("[red]無法載入伺服器設定[/red]")
+        raise typer.Exit(1)
+    
+    paths = PathResolver(config)
+    log_file = paths.get_session_log()
+    
+    if not log_file.exists():
+        console.print(f"[yellow]日誌檔案不存在: {log_file}[/yellow]")
+        console.print("提示: 伺服器可能尚未啟動過")
+        raise typer.Exit(1)
+    
+    try:
+        if follow:
+            # 即時跟隨模式
+            console.print(f"[cyan]跟隨日誌: {log_file}[/cyan]")
+            console.print(f"[dim]按 Ctrl+C 停止[/dim]\n")
+            console.print("="*60)
+            
+            # 先顯示最後 N 行
+            with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
+                all_lines = f.readlines()
+                for line in all_lines[-lines:]:
+                    print(line, end='')
+            
+            # 然後跟隨新內容
+            with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
+                # 移到檔案末尾
+                f.seek(0, 2)
+                
+                while True:
+                    line = f.readline()
+                    if line:
+                        print(line, end='')
+                    else:
+                        time.sleep(0.1)
+        else:
+            # 顯示最後 N 行
+            console.print(f"[cyan]日誌檔案: {log_file}[/cyan]")
+            console.print(f"[dim]顯示最後 {lines} 行[/dim]\n")
+            console.print("="*60)
+            
+            with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
+                all_lines = f.readlines()
+                for line in all_lines[-lines:]:
+                    print(line, end='')
+    
+    except KeyboardInterrupt:
+        console.print("\n\n" + "="*60)
+        console.print("[yellow]已停止跟隨日誌[/yellow]")
+    except Exception as e:
+        console.print(f"[red]讀取日誌失敗: {e}[/red]")
         raise typer.Exit(1)
 
 
@@ -282,16 +361,11 @@ def backup(server_name: str):
         raise typer.Exit(1)
 
 
-# DNS 相關指令
-dns_app = typer.Typer()
-app.add_typer(dns_app, name="dns", help="DNS 管理指令")
-
-
-@dns_app.command("update")
-def dns_update(server_name: str, force: bool = False):
-    """更新 DNS 記錄"""
-    from ..core.dns_manager import DNSManager
+@app.command()
+def diagnose(server_name: str):
+    """網路診斷工具 - 排查連接問題"""
     from ..utils.yaml_loader import load_server_config
+    from .network_diag import diagnose_network
     
     scanner = get_scanner()
     instance_path = scanner.find_instance(server_name)
@@ -305,7 +379,42 @@ def dns_update(server_name: str, force: bool = False):
         console.print("[red]無法載入伺服器設定[/red]")
         raise typer.Exit(1)
     
-    dns_manager = DNSManager(config)
+    # 執行診斷
+    domain = config.dns.domain if config.dns.enabled else "未設定"
+    port = config.dns.server_port if config.dns.enabled else 25565
+    
+    if domain == "未設定":
+        console.print("[yellow]⚠️  DNS 功能未啟用，將只測試端口狀態[/yellow]\n")
+        domain = "localhost"
+    
+    diagnose_network(domain, port)
+
+
+# DNS 相關指令
+dns_app = typer.Typer()
+app.add_typer(dns_app, name="dns", help="DNS 管理指令")
+
+
+@dns_app.command("update")
+def dns_update(server_name: str, force: bool = False):
+    """更新 DNS 記錄"""
+    from ..core.dns_manager import DNSManager
+    from ..utils.yaml_loader import load_server_config, load_global_config
+    
+    scanner = get_scanner()
+    instance_path = scanner.find_instance(server_name)
+    
+    if not instance_path:
+        console.print(f"[red]錯誤: 找不到伺服器 '{server_name}'[/red]")
+        raise typer.Exit(1)
+    
+    config = load_server_config(instance_path)
+    if not config:
+        console.print("[red]無法載入伺服器設定[/red]")
+        raise typer.Exit(1)
+    
+    global_config = load_global_config()
+    dns_manager = DNSManager(config, global_config)
     
     if not dns_manager.is_enabled():
         console.print("[yellow]DNS 功能未啟用[/yellow]")
@@ -326,7 +435,7 @@ def dns_update(server_name: str, force: bool = False):
 def dns_status_cmd(server_name: str):
     """查看 DNS 狀態"""
     from ..core.dns_manager import DNSManager
-    from ..utils.yaml_loader import load_server_config
+    from ..utils.yaml_loader import load_server_config, load_global_config
     from ..utils.time_utils import format_timestamp, get_time_ago_string
     
     scanner = get_scanner()
@@ -341,7 +450,8 @@ def dns_status_cmd(server_name: str):
         console.print("[red]無法載入伺服器設定[/red]")
         raise typer.Exit(1)
     
-    dns_manager = DNSManager(config)
+    global_config = load_global_config()
+    dns_manager = DNSManager(config, global_config)
     status = dns_manager.get_status()
     
     console.print(f"\n[bold]DNS 狀態: {server_name}[/bold]\n")
@@ -358,9 +468,9 @@ def dns_status_cmd(server_name: str):
 
 @dns_app.command("test")
 def dns_test(server_name: str):
-    """測試 DNS 連線"""
+    """測試 DNS 連線和配置"""
     from ..core.dns_manager import DNSManager
-    from ..utils.yaml_loader import load_server_config
+    from ..utils.yaml_loader import load_server_config, load_global_config
     
     scanner = get_scanner()
     instance_path = scanner.find_instance(server_name)
@@ -374,15 +484,37 @@ def dns_test(server_name: str):
         console.print("[red]無法載入伺服器設定[/red]")
         raise typer.Exit(1)
     
-    dns_manager = DNSManager(config)
+    global_config = load_global_config()
+    dns_manager = DNSManager(config, global_config)
     
-    console.print(f"測試 DNS 連線...")
-    success, message = dns_manager.test_connection()
+    console.print(f"\n[bold]DNS 連線測試: {server_name}[/bold]\n")
     
-    if success:
-        console.print(f"[green]✓ {message}[/green]")
+    result = dns_manager.test_connection()
+    
+    console.print(f"狀態: {'✓ 啟用' if result['enabled'] else '✗ 停用'}")
+    console.print(f"模式: {result['mode']}")
+    console.print(f"網域: {result['domain']}")
+    console.print(f"當前 IP: {result['current_ip'] or '無法檢測'}")
+    
+    if result['mode'].lower() == 'cloudflare':
+        api_token = config.dns.config.get('api_token', '')
+        zone_id = config.dns.config.get('zone_id', '')
+        console.print(f"\nCloudflare 配置:")
+        console.print(f"  API Token: {'✓ 已設定 (' + api_token[:8] + '...' + api_token[-4:] + ')' if api_token else '✗ 未設定'}")
+        console.print(f"  Zone ID: {'✓ 已設定 (' + zone_id[:8] + '...)' if zone_id else '✗ 未設定'}")
+        console.print(f"  API 連線: {'✓ 成功' if result['api_test'] else '✗ 失敗'}")
+        console.print(f"  SRV 記錄: {'✓ 啟用' if config.dns.srv_record.enabled else '✗ 停用'}")
+    
+    if result['errors']:
+        console.print(f"\n[yellow]⚠️  發現問題:[/yellow]")
+        for error in result['errors']:
+            console.print(f"  • {error}")
+    
+    if result['success']:
+        console.print(f"\n[green]✓ DNS 配置正確[/green]")
+        console.print("提示: 使用 'dns update' 指令更新 DNS 記錄")
     else:
-        console.print(f"[red]✗ {message}[/red]")
+        console.print(f"\n[red]✗ DNS 配置有誤，請修正上方問題[/red]")
         raise typer.Exit(1)
 
 

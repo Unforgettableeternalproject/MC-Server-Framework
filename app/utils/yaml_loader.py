@@ -37,6 +37,19 @@ def load_yaml(file_path: Path) -> Optional[Dict[str, Any]]:
         return None
 
 
+def load_global_config(config_path: Path = Path("config/app.yml")) -> Optional[Dict[str, Any]]:
+    """
+    載入全域配置
+    
+    Args:
+        config_path: app.yml 路徑
+    
+    Returns:
+        全域配置字典
+    """
+    return load_yaml(config_path)
+
+
 def save_yaml(data: Dict[str, Any], file_path: Path) -> bool:
     """
     儲存 YAML 檔案

@@ -65,7 +65,8 @@ def start_process(
     command: List[str],
     cwd: Path,
     stdout_file: Optional[Path] = None,
-    stderr_file: Optional[Path] = None
+    stderr_file: Optional[Path] = None,
+    attach: bool = False
 ) -> Optional[subprocess.Popen]:
     """
     啟動子程序
@@ -75,6 +76,7 @@ def start_process(
         cwd: 工作目錄
         stdout_file: 標準輸出重定向檔案
         stderr_file: 標準錯誤重定向檔案
+        attach: 是否附加到終端（顯示即時輸出）
     
     Returns:
         Popen 物件，失敗時回傳 None
@@ -83,25 +85,31 @@ def start_process(
         # 準備輸出串流
         stdout = None
         stderr = None
-        
-        if stdout_file:
-            stdout = open(stdout_file, 'w', encoding='utf-8')
-        
-        if stderr_file:
-            stderr = open(stderr_file, 'w', encoding='utf-8')
-        elif stdout_file:
-            stderr = subprocess.STDOUT
-        
-        # Windows 特殊設定：避免開啟新視窗
         creation_flags = 0
-        if sys.platform == 'win32':
-            creation_flags = subprocess.CREATE_NO_WINDOW
+        
+        if attach:
+            # 附加模式：直接輸出到終端，不隱藏視窗
+            stdout = None  # 讓它輸出到當前終端
+            stderr = None
+        else:
+            # 背景模式：重定向到檔案，隱藏視窗
+            if stdout_file:
+                stdout = open(stdout_file, 'w', encoding='utf-8')
+            
+            if stderr_file:
+                stderr = open(stderr_file, 'w', encoding='utf-8')
+            elif stdout_file:
+                stderr = subprocess.STDOUT
+            
+            # Windows 特殊設定：避免開啟新視窗
+            if sys.platform == 'win32':
+                creation_flags = subprocess.CREATE_NO_WINDOW
         
         process = subprocess.Popen(
             command,
             cwd=str(cwd),
-            stdout=stdout if stdout else subprocess.PIPE,
-            stderr=stderr if stderr else subprocess.PIPE,
+            stdout=stdout if stdout else None,
+            stderr=stderr if stderr else None,
             stdin=subprocess.PIPE,
             creationflags=creation_flags
         )

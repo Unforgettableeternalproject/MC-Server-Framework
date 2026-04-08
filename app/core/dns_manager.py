@@ -20,15 +20,17 @@ from ..core.path_resolver import PathResolver
 class DNSManager:
     """DNS 管理器"""
     
-    def __init__(self, config: ServerInstanceConfig):
+    def __init__(self, config: ServerInstanceConfig, global_config: Optional[Dict[str, Any]] = None):
         """
         初始化 DNS 管理器
         
         Args:
             config: 伺服器設定
+            global_config: 全域配置（從 app.yml 載入）
         """
         self.config = config
         self.dns_config: DNSConfig = config.dns
+        self.global_config = global_config or {}
         self.paths = PathResolver(config)
         self.status = DNSStatus(
             enabled=self.dns_config.enabled,
@@ -37,6 +39,37 @@ class DNSManager:
         self._load_state()
         self._update_thread: Optional[threading.Thread] = None
         self._stop_thread = False
+        
+        # 從全域配置讀取 API 憑證作為後備
+        self._merge_global_config()
+    
+    def _merge_global_config(self):
+        """合併全域配置到 DNS 配置（server.yml 優先）"""
+        if not self.global_config:
+            return
+        
+        dns_global = self.global_config.get('dns', {})
+        mode = self.dns_config.mode.lower()
+        
+        # 如果 server.yml 沒有配置 API 憑證，從全域配置讀取
+        if mode == 'cloudflare':
+            cloudflare_global = dns_global.get('cloudflare', {})
+            if not self.dns_config.config.get('api_token'):
+                api_token = cloudflare_global.get('api_token')
+                if api_token:
+                    self.dns_config.config['api_token'] = api_token
+            
+            if not self.dns_config.config.get('zone_id'):
+                zone_id = cloudflare_global.get('zone_id')
+                if zone_id:
+                    self.dns_config.config['zone_id'] = zone_id
+        
+        elif mode == 'duckdns':
+            duckdns_global = dns_global.get('duckdns', {})
+            if not self.dns_config.config.get('token'):
+                token = duckdns_global.get('token')
+                if token:
+                    self.dns_config.config['token'] = token
     
     def is_enabled(self) -> bool:
         """檢查 DNS 功能是否啟用"""
@@ -350,65 +383,81 @@ class DNSManager:
                     break
                 time.sleep(1)
     
-    def test_connection(self) -> tuple[bool, str]:
+    def test_connection(self) -> Dict[str, Any]:
         """
-        測試 DNS 服務連線
+        測試 DNS 連線和配置
         
         Returns:
-            (是否成功, 訊息)
+            測試結果字典
         """
+        result = {
+            'success': False,
+            'enabled': self.dns_config.enabled,
+            'mode': self.dns_config.mode,
+            'domain': self.dns_config.domain,
+            'current_ip': None,
+            'has_credentials': False,
+            'api_test': False,
+            'errors': []
+        }
+        
         if not self.is_enabled():
-            return False, "DNS 功能未啟用"
+            result['errors'].append('DNS 功能未啟用')
+            return result
         
-        # 測試取得 IP
-        ip = self.get_current_ip()
-        if not ip:
-            return False, "無法取得公網 IP"
+        # 測試 IP 檢測
+        current_ip = self.get_current_ip()
+        result['current_ip'] = current_ip
+        if not current_ip:
+            result['errors'].append('無法檢測公網 IP')
+            return result
         
-        # 測試 API 連線
+        # 檢查憑證
         mode = self.dns_config.mode.lower()
+        if mode == 'cloudflare':
+            api_token = self.dns_config.config.get('api_token')
+            zone_id = self.dns_config.config.get('zone_id')
+            
+            if not api_token:
+                result['errors'].append('缺少 Cloudflare API Token')
+            if not zone_id:
+                result['errors'].append('缺少 Cloudflare Zone ID')
+            
+            result['has_credentials'] = bool(api_token and zone_id)
+            
+            # 測試 API 連線
+            if result['has_credentials']:
+                try:
+                    headers = {
+                        "Authorization": f"Bearer {api_token}",
+                        "Content-Type": "application/json"
+                    }
+                    url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}"
+                    response = requests.get(url, headers=headers, timeout=10)
+                    
+                    if response.status_code == 200:
+                        result['api_test'] = True
+                        result['success'] = True
+                    else:
+                        result['errors'].append(f'Cloudflare API 錯誤: HTTP {response.status_code}')
+                        if response.status_code == 401:
+                            result['errors'].append('API Token 無效或已過期')
+                        elif response.status_code == 403:
+                            result['errors'].append('API Token 權限不足')
+                except Exception as e:
+                    result['errors'].append(f'API 連線失敗: {str(e)}')
         
-        if mode == "cloudflare":
-            return self._test_cloudflare()
-        elif mode == "duckdns":
-            return self._test_duckdns()
-        else:
-            return False, f"不支援的 DNS 模式: {mode}"
-    
-    def _test_cloudflare(self) -> tuple[bool, str]:
-        """測試 Cloudflare API 連線"""
-        try:
-            api_token = self.dns_config.config.get("api_token")
-            zone_id = self.dns_config.config.get("zone_id")
+        elif mode == 'duckdns':
+            token = self.dns_config.config.get('token')
+            result['has_credentials'] = bool(token)
             
-            if not api_token or not zone_id:
-                return False, "缺少 API Token 或 Zone ID"
-            
-            headers = {"Authorization": f"Bearer {api_token}"}
-            url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records"
-            
-            response = requests.get(url, headers=headers, timeout=10, params={"per_page": 1})
-            
-            if response.status_code == 200:
-                return True, f"Cloudflare API 連線正常 (IP: {self.get_current_ip()})"
-            else:
-                return False, f"API 錯誤: {response.status_code}"
-        
-        except Exception as e:
-            return False, f"連線失敗: {str(e)}"
-    
-    def _test_duckdns(self) -> tuple[bool, str]:
-        """測試 DuckDNS API 連線"""
-        try:
-            token = self.dns_config.config.get("token")
             if not token:
-                return False, "缺少 Token"
-            
-            # DuckDNS 沒有純測試 API，直接測試更新
-            return True, f"DuckDNS Token 已設定 (IP: {self.get_current_ip()})"
+                result['errors'].append('缺少 DuckDNS Token')
+            else:
+                result['api_test'] = True
+                result['success'] = True
         
-        except Exception as e:
-            return False, f"測試失敗: {str(e)}"
+        return result
     
     def get_status(self) -> DNSStatus:
         """取得 DNS 狀態"""
