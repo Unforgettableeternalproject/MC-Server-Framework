@@ -1,0 +1,16 @@
+include README.md
+include LICENSE
+include requirements.txt
+recursive-include config *.yml
+recursive-include templates *.yml
+recursive-include docs *.md
+prune tests
+prune .git
+prune build
+prune dist
+prune env
+prune venv
+prune __pycache__
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude .DS_Store

@@ -1,0 +1,74 @@
+# .gitignore - MC Server Framework
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虛擬環境
+venv/
+env/
+ENV/
+
+# 建置檔案
+build/
+dist/
+*.spec
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 伺服器實例（保留結構但忽略內容）
+servers/*/server/*
+servers/*/runtime/*
+servers/*/backups/*
+servers/*/temp/*
+!servers/*/.gitkeep
+!servers/*/server.yml
+
+# 排除 .gitkeep
+!.gitkeep
+
+# 日誌
+logs/
+*.log
+
+# 暫存檔案
+*.tmp
+*.bak
+
+# 設定檔（可能包含敏感資訊）
+config/app.yml
+config/java_registry.yml
+
+# 保留範本
+!templates/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Servers
+servers/*

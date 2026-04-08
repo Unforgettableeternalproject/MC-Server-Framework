@@ -1,0 +1,91 @@
+# Minecraft Server 設定檔範本
+# 此檔案會在執行 'mc-host init' 時自動建立
+
+meta:
+  name: "example-server"
+  display_name: "Example Minecraft Server"
+  description: "這是一個範例伺服器"
+
+server:
+  root_dir: "server"
+  startup_target: "server.jar"
+  type: "minecraft-java"
+  loader: "auto"  # auto, vanilla, paper, purpur, spigot, forge, fabric, neoforge
+  working_dir: "server"
+
+java:
+  mode: "profile"  # profile, auto, custom
+  profile: "java21"
+  # custom_path: "C:/custom/java/bin/java.exe"  # 僅在 mode=custom 時使用
+
+launch:
+  min_memory: "2G"
+  max_memory: "6G"
+  jvm_args: []
+  server_args:
+    - "nogui"
+  prelaunch_hooks: []
+  postlaunch_hooks: []
+  stop_command: "stop"
+
+detection:
+  auto_detect_loader: true
+  auto_detect_worlds: true
+  auto_detect_mods: true
+
+world:
+  mode: "auto"
+  include:
+    - "world*"
+  exclude: []
+
+backup:
+  enabled: true
+  mode: "manual"  # manual, scheduled, disabled
+  provider: "internal"  # internal, external, disabled
+  schedule: null
+  retention:
+    keep_last: 10
+    keep_days: 14
+  compression: "zip"
+  include:
+    - "world*"
+    - "server.properties"
+    - "ops.json"
+    - "whitelist.json"
+    - "banned-players.json"
+    - "banned-ips.json"
+  exclude:
+    - "logs/**"
+    - "crash-reports/**"
+    - "libraries/**"
+    - "mods/**"
+  hooks:
+    before_backup:
+      - "save-off"
+      - "save-all"
+    after_backup:
+      - "save-on"
+
+dns:
+  enabled: false  # 設為 true 以啟用 DNS 功能
+  mode: "cloudflare"  # cloudflare, duckdns, custom, disabled
+  domain: "mc.yourdomain.com"  # 您的網域名稱
+  server_port: 25565  # Minecraft 伺服器端口（預設 25565）
+  update_interval: 300  # 秒，每 5 分鐘檢查一次
+  srv_record:
+    enabled: true  # 啟用 SRV 記錄（讓玩家不需輸入端口）
+    priority: 0
+    weight: 5
+    port: 25565  # SRV 記錄的端口（通常與 server_port 相同）
+  config:
+    # Cloudflare 設定
+    api_token: "YOUR_CLOUDFLARE_API_TOKEN"
+    zone_id: "YOUR_CLOUDFLARE_ZONE_ID"
+    # DuckDNS 設定
+    # token: "YOUR_DUCKDNS_TOKEN"
+
+features:
+  allow_internal_backup: true
+  allow_auto_restart: false
+  allow_monitoring: true
