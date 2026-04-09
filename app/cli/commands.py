@@ -577,5 +577,266 @@ def java_validate():
     console.print(f"\n有效: {valid_count} / {len(results)}")
 
 
+# Tunnel 相關指令
+tunnel_app = typer.Typer()
+app.add_typer(tunnel_app, name="tunnel", help="隧道管理指令")
+
+
+@tunnel_app.command("status")
+def tunnel_status(server_name: str):
+    """查看隧道狀態"""
+    from ..core.tunnel_manager import TunnelManager
+    from ..utils.yaml_loader import load_server_config, load_global_config
+    
+    scanner = get_scanner()
+    instance_path = scanner.find_instance(server_name)
+    
+    if not instance_path:
+        console.print(f"[red]錯誤: 找不到伺服器 '{server_name}'[/red]")
+        raise typer.Exit(1)
+    
+    config = load_server_config(instance_path)
+    if not config:
+        console.print("[red]無法載入伺服器設定[/red]")
+        raise typer.Exit(1)
+    
+    global_config = load_global_config()
+    tunnel_mgr = TunnelManager(config, global_config)
+    status = tunnel_mgr.get_status()
+    
+    console.print(f"\n[bold]隧道狀態: {server_name}[/bold]\n")
+    console.print(f"啟用: {'是' if status['enabled'] else '否'}")
+    
+    if status['enabled']:
+        console.print(f"類型: {status['type']}")
+        console.print(f"運行中: {'是' if status['running'] else '否'}")
+        if status['running'] and status['pid']:
+            console.print(f"PID: {status['pid']}")
+        if status['address']:
+            console.print(f"隧道地址: {status['address']}")
+
+
+@tunnel_app.command("start")
+def tunnel_start(server_name: str):
+    """手動啟動隧道"""
+    from ..core.tunnel_manager import TunnelManager
+    from ..utils.yaml_loader import load_server_config, load_global_config
+    
+    scanner = get_scanner()
+    instance_path = scanner.find_instance(server_name)
+    
+    if not instance_path:
+        console.print(f"[red]錯誤: 找不到伺服器 '{server_name}'[/red]")
+        raise typer.Exit(1)
+    
+    config = load_server_config(instance_path)
+    if not config:
+        console.print("[red]無法載入伺服器設定[/red]")
+        raise typer.Exit(1)
+    
+    global_config = load_global_config()
+    tunnel_mgr = TunnelManager(config, global_config)
+    
+    if not tunnel_mgr.is_enabled():
+        console.print("[yellow]隧道功能未啟用[/yellow]")
+        console.print("請在 server.yml 中設定 tunnel.enabled: true")
+        raise typer.Exit(1)
+    
+    console.print(f"啟動隧道: {server_name}")
+    if tunnel_mgr.start():
+        console.print("[green]✓ 隧道已啟動[/green]")
+        status = tunnel_mgr.get_status()
+        if status['address']:
+            console.print(f"隧道地址: {status['address']}")
+    else:
+        console.print("[red]隧道啟動失敗[/red]")
+        raise typer.Exit(1)
+
+
+@tunnel_app.command("stop")
+def tunnel_stop(server_name: str):
+    """手動停止隧道"""
+    from ..core.tunnel_manager import TunnelManager
+    from ..utils.yaml_loader import load_server_config, load_global_config
+    
+    scanner = get_scanner()
+    instance_path = scanner.find_instance(server_name)
+    
+    if not instance_path:
+        console.print(f"[red]錯誤: 找不到伺服器 '{server_name}'[/red]")
+        raise typer.Exit(1)
+    
+    config = load_server_config(instance_path)
+    if not config:
+        console.print("[red]無法載入伺服器設定[/red]")
+        raise typer.Exit(1)
+    
+    global_config = load_global_config()
+    tunnel_mgr = TunnelManager(config, global_config)
+    
+    console.print(f"停止隧道: {server_name}")
+    if tunnel_mgr.stop():
+        console.print("[green]✓ 隧道已停止[/green]")
+    else:
+        console.print("[yellow]隧道未運行或停止失敗[/yellow]")
+
+
+@app.command("console")
+def server_console(server_name: str):
+    """連接到伺服器 RCON 控制台（互動模式）"""
+    from ..core.rcon_manager import RCONManager, RCONError, get_rcon_config_from_properties
+    from ..utils.yaml_loader import load_server_config
+    from ..core.path_resolver import PathResolver
+    
+    scanner = get_scanner()
+    instance_path = scanner.find_instance(server_name)
+    
+    if not instance_path:
+        console.print(f"[red]錯誤: 找不到伺服器 '{server_name}'[/red]")
+        raise typer.Exit(1)
+    
+    config = load_server_config(instance_path)
+    if not config:
+        console.print("[red]無法載入伺服器設定[/red]")
+        raise typer.Exit(1)
+    
+    # 檢查 RCON 是否啟用
+    if not config.rcon.enabled:
+        console.print("[yellow]RCON 功能未啟用[/yellow]")
+        console.print("請在 server.yml 中設定 rcon.enabled: true")
+        raise typer.Exit(1)
+    
+    # 從 server.properties 讀取實際配置
+    path_resolver = PathResolver(config)
+    properties_file = path_resolver.get_server_root() / "server.properties"
+    
+    if not properties_file.exists():
+        console.print("[red]server.properties 不存在，請先啟動伺服器一次[/red]")
+        raise typer.Exit(1)
+    
+    rcon_config = get_rcon_config_from_properties(properties_file)
+    if not rcon_config or not rcon_config['enabled']:
+        console.print("[red]RCON 在 server.properties 中未啟用[/red]")
+        console.print("請執行一次 'start' 命令以自動配置 RCON")
+        raise typer.Exit(1)
+    
+    # 使用實際配置
+    password = config.rcon.password or rcon_config['password']
+    if not password:
+        console.print("[red]RCON 密碼未設定[/red]")
+        raise typer.Exit(1)
+    
+    console.print(f"\n[bold cyan]連接到 {server_name} RCON 控制台...[/bold cyan]")
+    console.print(f"主機: {config.rcon.host}:{rcon_config['port']}\n")
+    
+    try:
+        rcon = RCONManager(
+            host=config.rcon.host,
+            port=rcon_config['port'],
+            password=password
+        )
+        
+        rcon.connect()
+        console.print("[green]✓ 已連接[/green]")
+        console.print("\n輸入指令（不需要前綴 /），輸入 'exit' 或 'quit' 離開\n")
+        
+        while True:
+            try:
+                # 讀取用戶輸入
+                command = input("> ").strip()
+                
+                if not command:
+                    continue
+                
+                if command.lower() in ['exit', 'quit']:
+                    break
+                
+                # 發送命令
+                response = rcon.send_command(command)
+                if response:
+                    console.print(f"[dim]{response}[/dim]")
+                
+            except KeyboardInterrupt:
+                console.print("\n")
+                break
+            except EOFError:
+                break
+        
+        rcon.disconnect()
+        console.print("[yellow]已斷開連接[/yellow]")
+        
+    except RCONError as e:
+        console.print(f"[red]RCON 錯誤: {e}[/red]")
+        console.print("\n可能的原因:")
+        console.print("  1. 伺服器未運行")
+        console.print("  2. RCON 密碼錯誤")
+        console.print("  3. RCON 端口被占用")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]未預期的錯誤: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("send")
+def server_send(
+    server_name: str,
+    command: str = typer.Argument(..., help="要執行的指令（不需要前綴 /）")
+):
+    """發送單個指令到伺服器 RCON"""
+    from ..core.rcon_manager import RCONManager, RCONError, get_rcon_config_from_properties
+    from ..utils.yaml_loader import load_server_config
+    from ..core.path_resolver import PathResolver
+    
+    scanner = get_scanner()
+    instance_path = scanner.find_instance(server_name)
+    
+    if not instance_path:
+        console.print(f"[red]錯誤: 找不到伺服器 '{server_name}'[/red]")
+        raise typer.Exit(1)
+    
+    config = load_server_config(instance_path)
+    if not config:
+        console.print("[red]無法載入伺服器設定[/red]")
+        raise typer.Exit(1)
+    
+    # 檢查 RCON 是否啟用
+    if not config.rcon.enabled:
+        console.print("[yellow]RCON 功能未啟用[/yellow]")
+        raise typer.Exit(1)
+    
+    # 從 server.properties 讀取實際配置
+    path_resolver = PathResolver(config)
+    properties_file = path_resolver.get_server_root() / "server.properties"
+    
+    if not properties_file.exists():
+        console.print("[red]server.properties 不存在[/red]")
+        raise typer.Exit(1)
+    
+    rcon_config = get_rcon_config_from_properties(properties_file)
+    if not rcon_config or not rcon_config['enabled']:
+        console.print("[red]RCON 未啟用[/red]")
+        raise typer.Exit(1)
+    
+    password = config.rcon.password or rcon_config['password']
+    if not password:
+        console.print("[red]RCON 密碼未設定[/red]")
+        raise typer.Exit(1)
+    
+    try:
+        with RCONManager(config.rcon.host, rcon_config['port'], password) as rcon:
+            response = rcon.send_command(command)
+            if response:
+                console.print(response)
+            else:
+                console.print("[dim]（無回應）[/dim]")
+                
+    except RCONError as e:
+        console.print(f"[red]RCON 錯誤: {e}[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]錯誤: {e}[/red]")
+        raise typer.Exit(1)
+
+
 if __name__ == "__main__":
     app()

@@ -259,6 +259,38 @@ class ServerLauncher:
             
             print("="*60 + "\n")
         
+        # RCON 自動配置（如果啟用）
+        if hasattr(self.config, 'rcon') and self.config.rcon.enabled and self.config.rcon.auto_configure:
+            from ..core.rcon_manager import enable_rcon_in_properties
+            
+            print("\n" + "="*60)
+            print("RCON 遠端控制台配置")
+            print("="*60)
+            
+            properties_file = self.paths.get_server_root() / "server.properties"
+            if properties_file.exists():
+                try:
+                    enable_rcon_in_properties(
+                        properties_file,
+                        password=self.config.rcon.password,
+                        port=self.config.rcon.port
+                    )
+                    print(f"✓ RCON 已啟用")
+                    print(f"  主機: {self.config.rcon.host}")
+                    print(f"  端口: {self.config.rcon.port}")
+                    if self.config.rcon.password:
+                        print(f"  密碼: {'*' * len(self.config.rcon.password)}")
+                    else:
+                        print(f"  密碼: (自動生成)")
+                    print(f"\n💡 使用 'console' 命令進入伺服器控制台")
+                    print(f"   或使用 'send' 命令發送單個指令")
+                except Exception as e:
+                    print(f"⚠️  RCON 配置失敗: {e}")
+            else:
+                print("server.properties 尚未生成，RCON 將在首次啟動後配置")
+            
+            print("="*60 + "\n")
+        
         if attach:
             print(f"[附加模式] 伺服器日誌將顯示在下方，按 Ctrl+C 可停止伺服器\n")
             print("="*60)
@@ -287,6 +319,30 @@ class ServerLauncher:
             print(f"伺服器已啟動 (PID: {pid})")
             print(f"日誌檔案: {log_file}")
             self.status.update_state(ServerState.RUNNING)
+            
+            # 啟動隧道（如果啟用且設為自動啟動）
+            if (hasattr(self.config, 'tunnel') and 
+                self.config.tunnel.enabled and 
+                self.config.tunnel.auto_start):
+                print("\n" + "="*60)
+                print("啟動隧道服務")
+                print("="*60)
+                
+                from ..core.tunnel_manager import TunnelManager
+                from ..utils.yaml_loader import load_global_config
+                
+                global_config = load_global_config()
+                tunnel_mgr = TunnelManager(self.config, global_config)
+                
+                if tunnel_mgr.start():
+                    tunnel_status = tunnel_mgr.get_status()
+                    print(f"✓ 隧道已啟動")
+                    if tunnel_status.get('address'):
+                        print(f"隧道地址: {tunnel_status['address']}")
+                    print("="*60 + "\n")
+                else:
+                    print("⚠️  隧道啟動失敗（伺服器仍在運行）")
+                    print("="*60 + "\n")
         else:
             # 附加模式：等待程序結束
             try:
@@ -315,6 +371,26 @@ class ServerLauncher:
             return False
         
         self.status.update_state(ServerState.STOPPING)
+        
+        # 停止隧道（如果啟用且設為自動停止）
+        if (hasattr(self.config, 'tunnel') and 
+            self.config.tunnel.enabled and 
+            self.config.tunnel.auto_stop):
+            print("\n" + "="*60)
+            print("停止隧道服務")
+            print("="*60)
+            
+            from ..core.tunnel_manager import TunnelManager
+            from ..utils.yaml_loader import load_global_config
+            
+            global_config = load_global_config()
+            tunnel_mgr = TunnelManager(self.config, global_config)
+            
+            if tunnel_mgr.stop():
+                print("✓ 隧道已停止")
+            else:
+                print("⚠️  隧道停止失敗")
+            print("="*60 + "\n")
         
         # 透過指令停止
         if self.process:

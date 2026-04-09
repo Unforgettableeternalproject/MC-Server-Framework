@@ -106,6 +106,28 @@ class SRVRecordConfig:
 
 
 @dataclass
+class TunnelConfig:
+    """隧道設定（用於穿透 CGNAT）"""
+    enabled: bool = False
+    type: str = "playit"  # playit, ngrok, cloudflared, zerotier
+    executable_path: str = "playit.exe"  # 執行檔路徑
+    address: Optional[str] = None  # 隧道地址（例如 xxx.playit.gg）
+    auto_start: bool = True  # 是否隨伺服器自動啟動
+    auto_stop: bool = True   # 是否隨伺服器自動停止
+    config: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class RCONConfig:
+    """RCON（遠端控制台）設定"""
+    enabled: bool = True  # 是否啟用 RCON
+    host: str = "localhost"  # RCON 主機地址
+    port: int = 25575  # RCON 端口
+    password: str = ""  # RCON 密碼（如果為空，會自動生成）
+    auto_configure: bool = True  # 是否在啟動時自動配置 server.properties
+
+
+@dataclass
 class DNSConfig:
     """DNS 設定"""
     enabled: bool = False
@@ -136,6 +158,8 @@ class ServerInstanceConfig:
     world: WorldConfig = field(default_factory=WorldConfig)
     backup: BackupConfig = field(default_factory=BackupConfig)
     dns: DNSConfig = field(default_factory=DNSConfig)
+    tunnel: TunnelConfig = field(default_factory=TunnelConfig)
+    rcon: RCONConfig = field(default_factory=RCONConfig)
     features: FeaturesConfig = field(default_factory=FeaturesConfig)
     
     # 實例的實際路徑（由系統填充）

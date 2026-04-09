@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 from ..models.server_config import (
     ServerInstanceConfig, ServerMeta, ServerConfig, JavaConfig,
     LaunchConfig, DetectionConfig, WorldConfig, BackupConfig,
-    DNSConfig, FeaturesConfig, BackupHooks, BackupRetention, SRVRecordConfig
+    DNSConfig, TunnelConfig, RCONConfig, FeaturesConfig, BackupHooks, BackupRetention, SRVRecordConfig
 )
 from ..models.java_profile import JavaRegistry, JavaProfile
 
@@ -120,6 +120,14 @@ def load_server_config(instance_path: Path) -> Optional[ServerInstanceConfig]:
         dns_data['srv_record'] = srv_record
         dns = DNSConfig(**dns_data)
         
+        # 隧道設定
+        tunnel_data = data.get('tunnel', {})
+        tunnel = TunnelConfig(**tunnel_data)
+        
+        # RCON 設定
+        rcon_data = data.get('rcon', {})
+        rcon = RCONConfig(**rcon_data)
+        
         # 功能開關
         features = FeaturesConfig(**data.get('features', {}))
         
@@ -133,6 +141,8 @@ def load_server_config(instance_path: Path) -> Optional[ServerInstanceConfig]:
             world=world,
             backup=backup,
             dns=dns,
+            tunnel=tunnel,
+            rcon=rcon,
             features=features,
             instance_path=instance_path
         )
