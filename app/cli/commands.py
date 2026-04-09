@@ -609,11 +609,19 @@ def tunnel_status(server_name: str):
     
     if status['enabled']:
         console.print(f"類型: {status['type']}")
-        console.print(f"運行中: {'是' if status['running'] else '否'}")
+        console.print(f"隧道狀態: {'運行中' if status['running'] else '已停止'}")
+        console.print(f"伺服器狀態: {'運行中' if status['server_running'] else '已停止'}")
+        
         if status['running'] and status['pid']:
             console.print(f"PID: {status['pid']}")
         if status['address']:
             console.print(f"隧道地址: {status['address']}")
+        
+        # 檢查孤立狀態
+        if status['orphaned']:
+            console.print("\n[yellow]⚠️  警告: 隧道處於孤立狀態[/yellow]")
+            console.print("[yellow]伺服器已停止但隧道仍在運行，建議執行清理:[/yellow]")
+            console.print("[dim]python -m app.main tunnel cleanup " + server_name + "[/dim]")
 
 
 @tunnel_app.command("start")
@@ -636,6 +644,10 @@ def tunnel_start(server_name: str):
     
     global_config = load_global_config()
     tunnel_mgr = TunnelManager(config, global_config)
+    
+    # 啟動前先檢查並清理孤立的隧道
+    if tunnel_mgr.check_and_cleanup(verbose=True):
+        console.print("")
     
     if not tunnel_mgr.is_enabled():
         console.print("[yellow]隧道功能未啟用[/yellow]")
@@ -679,6 +691,122 @@ def tunnel_stop(server_name: str):
         console.print("[green]✓ 隧道已停止[/green]")
     else:
         console.print("[yellow]隧道未運行或停止失敗[/yellow]")
+
+
+@tunnel_app.command("cleanup")
+def tunnel_cleanup(server_name: str):
+    """清理孤立的隧道（伺服器已停止但隧道仍在運行）"""
+    from ..core.tunnel_manager import TunnelManager
+    from ..utils.yaml_loader import load_server_config, load_global_config
+    
+    scanner = get_scanner()
+    instance_path = scanner.find_instance(server_name)
+    
+    if not instance_path:
+        console.print(f"[red]錯誤: 找不到伺服器 '{server_name}'[/red]")
+        raise typer.Exit(1)
+    
+    config = load_server_config(instance_path)
+    if not config:
+        console.print("[red]無法載入伺服器設定[/red]")
+        raise typer.Exit(1)
+    
+    global_config = load_global_config()
+    tunnel_mgr = TunnelManager(config, global_config)
+    
+    console.print(f"檢查隧道狀態: {server_name}")
+    
+    if tunnel_mgr.check_and_cleanup(verbose=True):
+        console.print("[green]✓ 清理完成[/green]")
+    else:
+        console.print("[dim]無需清理（隧道未運行或伺服器仍在運行）[/dim]")
+
+
+@tunnel_app.command("diagnose")
+def tunnel_diagnose(server_name: str):
+    """診斷隧道連接問題"""
+    from ..core.tunnel_manager import TunnelManager
+    from ..utils.yaml_loader import load_server_config, load_global_config
+    
+    scanner = get_scanner()
+    instance_path = scanner.find_instance(server_name)
+    
+    if not instance_path:
+        console.print(f"[red]錯誤: 找不到伺服器 '{server_name}'[/red]")
+        raise typer.Exit(1)
+    
+    config = load_server_config(instance_path)
+    if not config:
+        console.print("[red]無法載入伺服器設定[/red]")
+        raise typer.Exit(1)
+    
+    global_config = load_global_config()
+    tunnel_mgr = TunnelManager(config, global_config)
+    status = tunnel_mgr.get_status()
+    
+    console.print(f"\n[bold cyan]隧道連接診斷: {server_name}[/bold cyan]\n")
+    console.print("="*60)
+    
+    # 檢查基本狀態
+    console.print("\n[bold]1. 基本狀態檢查[/bold]")
+    console.print(f"隧道啟用: {'✓' if status['enabled'] else '✗'}")
+    console.print(f"隧道運行: {'✓' if status['running'] else '✗'}")
+    console.print(f"伺服器運行: {'✓' if status['server_running'] else '✗'}")
+    
+    if status['orphaned']:
+        console.print("[yellow]⚠️  警告: 隧道處於孤立狀態（伺服器已停止）[/yellow]")
+    
+    # 連接重置問題診斷
+    console.print("\n[bold]2. Connection Reset 問題診斷[/bold]")
+    console.print("\n如果玩家遇到 'Internal Exception: Connection Reset' 錯誤，")
+    console.print("可能的原因和解決方案：\n")
+    
+    console.print("[cyan]原因 1: 伺服器實際已關閉但隧道仍在運行[/cyan]")
+    if status['orphaned']:
+        console.print("  [yellow]✗ 檢測到此問題！[/yellow]")
+        console.print(f"  解決方案: 執行 'python -m app.main tunnel cleanup {server_name}'")
+    else:
+        console.print("  [green]✓ 無此問題[/green]")
+    
+    console.print("\n[cyan]原因 2: 網絡不穩定或 ISP 限制[/cyan]")
+    console.print("  • 某些 ISP 可能會限制或重置長時間的 TCP 連接")
+    console.print("  • 移動網絡（4G/5G）可能不穩定")
+    console.print("  解決方案:")
+    console.print("    - 玩家可以嘗試使用 VPN")
+    console.print("    - 玩家可以嘗試切換網絡（如從移動網絡切換到 Wi-Fi）")
+    console.print("    - 檢查防火牆或路由器設置")
+    
+    console.print("\n[cyan]原因 3: PlayIt 隧道節點問題[/cyan]")
+    console.print("  • PlayIt 的某些節點可能與特定地區的玩家連接不佳")
+    console.print("  解決方案:")
+    console.print("    - 重新啟動隧道可能會分配到不同的節點")
+    console.print("    - 考慮升級到 PlayIt 付費版以獲得更穩定的節點")
+    
+    console.print("\n[cyan]原因 4: Minecraft 版本或 Mod 不匹配[/cyan]")
+    console.print("  • 玩家的遊戲版本與伺服器不一致")
+    console.print("  • 玩家缺少必要的 Mod")
+    console.print("  解決方案:")
+    console.print(f"    - 確認伺服器版本: {config.meta.display_name}")
+    console.print("    - 確保玩家安裝了相同版本的 Forge 和所有 Mod")
+    
+    console.print("\n[cyan]原因 5: server.properties 配置問題[/cyan]")
+    console.print("  • max-players 已滿")
+    console.print("  • 玩家被 ban")
+    console.print("  • online-mode 設置問題")
+    console.print("  解決方案: 檢查 server.properties 和白名單設置")
+    
+    console.print("\n[bold]3. 建議的檢查步驟[/bold]\n")
+    console.print("1. 確認伺服器正在運行")
+    console.print("2. 檢查伺服器日誌是否有錯誤訊息")
+    console.print("3. 請能連接的玩家和不能連接的玩家比較:")
+    console.print("   - 使用的網絡環境（家庭寬帶 vs 移動網絡）")
+    console.print("   - 所在地區")
+    console.print("   - 遊戲版本和 Mod 清單")
+    console.print("4. 如果問題持續，可以嘗試重啟隧道:")
+    console.print(f"   python -m app.main tunnel stop {server_name}")
+    console.print(f"   python -m app.main tunnel start {server_name}")
+    
+    console.print("\n" + "="*60)
 
 
 @app.command("console")

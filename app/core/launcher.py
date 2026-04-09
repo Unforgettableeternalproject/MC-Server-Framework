@@ -334,6 +334,10 @@ class ServerLauncher:
                 global_config = load_global_config()
                 tunnel_mgr = TunnelManager(self.config, global_config)
                 
+                # 先檢查並清理可能存在的孤立隧道
+                if tunnel_mgr.check_and_cleanup(verbose=False):
+                    print("已清理舊的隧道連接")
+                
                 if tunnel_mgr.start():
                     tunnel_status = tunnel_mgr.get_status()
                     print(f"✓ 隧道已啟動")

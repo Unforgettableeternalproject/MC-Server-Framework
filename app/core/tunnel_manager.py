@@ -178,7 +178,9 @@ class TunnelManager:
             'running': False,
             'pid': None,
             'type': None,
-            'address': None
+            'address': None,
+            'server_running': self.is_server_running(),
+            'orphaned': False  # 是否為孤立狀態（伺服器停止但隧道還在運行）
         }
         
         if not self.is_enabled():
@@ -190,6 +192,8 @@ class TunnelManager:
         
         if status['running']:
             status['pid'] = self._load_pid()
+            # 檢查是否為孤立狀態
+            status['orphaned'] = status['running'] and not status['server_running']
         
         return status
     
@@ -223,3 +227,58 @@ class TunnelManager:
                 pid_file.unlink()
         except Exception:
             pass
+    
+    def _get_server_pid_file(self) -> Path:
+        """取得伺服器 PID 檔案路徑"""
+        return self.paths.get_runtime_path() / "server.pid"
+    
+    def is_server_running(self) -> bool:
+        """檢查伺服器是否正在運行"""
+        try:
+            server_pid_file = self._get_server_pid_file()
+            if not server_pid_file.exists():
+                return False
+            
+            server_pid = int(server_pid_file.read_text().strip())
+            process = psutil.Process(server_pid)
+            return process.is_running()
+        except (psutil.NoSuchProcess, psutil.AccessDenied, ValueError, FileNotFoundError):
+            return False
+    
+    def check_and_cleanup(self, verbose: bool = False) -> bool:
+        """
+        檢查並清理孤立的隧道
+        如果伺服器已停止但隧道還在運行，自動停止隧道
+        
+        Args:
+            verbose: 是否顯示詳細訊息
+        
+        Returns:
+            True 如果執行了清理操作，False 如果不需要清理
+        """
+        if not self.is_enabled():
+            return False
+        
+        # 檢查隧道是否在運行
+        if not self.is_running():
+            return False
+        
+        # 檢查伺服器是否在運行
+        if self.is_server_running():
+            if verbose:
+                print("伺服器正在運行，隧道狀態正常")
+            return False
+        
+        # 伺服器已停止，但隧道還在運行 - 需要清理
+        if verbose:
+            print("⚠️  檢測到孤立的隧道（伺服器已停止但隧道仍在運行）")
+            print("正在自動清理...")
+        
+        if self.stop():
+            if verbose:
+                print("✓ 隧道已清理")
+            return True
+        else:
+            if verbose:
+                print("✗ 隧道清理失敗")
+            return False
