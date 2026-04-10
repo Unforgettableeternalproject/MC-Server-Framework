@@ -52,6 +52,7 @@ def show_main_menu():
     table.add_row("7", "🎮 進入 RCON 控制台")
     table.add_row("8", "🔧 管理工具菜單")
     table.add_row("9", "ℹ️  系統資訊和說明")
+    table.add_row("c", "🔍 系統診斷（檢查配置）")
     table.add_row("0", "❌ 離開")
     
     console.print(Panel(table, title="[bold]主選單[/bold]", border_style="cyan"))
@@ -69,6 +70,7 @@ def show_tools_menu():
     table.add_row("3", "☕ Java 管理")
     table.add_row("4", "💾 備份管理")
     table.add_row("5", "🔍 網絡診斷")
+    table.add_row("6", "🧹 清理孤立 PID")
     table.add_row("0", "⬅️  返回主選單")
     
     console.print(Panel(table, title="[bold]管理工具[/bold]", border_style="yellow"))
@@ -168,7 +170,7 @@ def handle_main_menu():
     """處理主選單選擇"""
     while True:
         show_main_menu()
-        choice = Prompt.ask("請選擇功能", choices=["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"], default="1")
+        choice = Prompt.ask("請選擇功能", choices=["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "c", "C"], default="1")
         
         console.print()
         
@@ -257,6 +259,12 @@ def handle_main_menu():
             console.print()
             Prompt.ask("[dim]按 Enter 繼續[/dim]", default="")
         
+        elif choice.lower() == "c":
+            # 系統診斷
+            run_command("check")
+            console.print()
+            Prompt.ask("[dim]按 Enter 繼續[/dim]", default="")
+        
         console.print()
 
 
@@ -264,7 +272,7 @@ def handle_tools_menu():
     """處理工具選單"""
     while True:
         show_tools_menu()
-        choice = Prompt.ask("請選擇工具", choices=["0", "1", "2", "3", "4", "5"], default="0")
+        choice = Prompt.ask("請選擇工具", choices=["0", "1", "2", "3", "4", "5", "6"], default="0")
         
         console.print()
         
@@ -290,6 +298,17 @@ def handle_tools_menu():
                 run_command(f"diagnose {server}")
                 console.print()
                 Prompt.ask("[dim]按 Enter 繼續[/dim]", default="")
+        
+        elif choice == "6":
+            # 清理孤立 PID
+            server = select_server()
+            if server:
+                console.print()
+                console.print("[yellow]此操作將清理孤立的 PID 文件（進程已死但文件還在）[/yellow]")
+                if Confirm.ask(f"確定要清理伺服器 {server} 的 PID 文件嗎？", default=True):
+                    run_command(f"cleanup {server}")
+                    console.print()
+                    Prompt.ask("[dim]按 Enter 繼續[/dim]", default="")
 
 
 def handle_tunnel_menu():

@@ -164,6 +164,8 @@ class TunnelManager:
             process = psutil.Process(pid)
             return process.is_running()
         except (psutil.NoSuchProcess, psutil.AccessDenied):
+            # 清理孤立的 PID 檔案（進程已死但檔案還在）
+            self._clear_pid()
             return False
     
     def get_status(self) -> dict:

@@ -452,6 +452,9 @@ class ServerLauncher:
                 self.status.pid = pid
                 self.status.update_state(ServerState.RUNNING)
                 return True
+            else:
+                # 清理孤立的 PID 檔案（進程已死但檔案還在）
+                self._remove_pid()
         
         self.status.update_state(ServerState.STOPPED)
         return False

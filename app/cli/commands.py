@@ -134,6 +134,7 @@ def info():
     
     # 診斷工具
     console.print("\n[cyan]● 診斷工具[/cyan]")
+    console.print("  check                系統診斷（檢查所有配置）")
     console.print("  diagnose <name>      網絡診斷")
     
     # 配置範例
@@ -144,6 +145,10 @@ def info():
     
     # 常見使用場景
     console.print("\n[bold]💡 常見使用場景[/bold]\n")
+    
+    console.print("[yellow]場景 0: 移植到新電腦後無法運行[/yellow]")
+    console.print("  python -m app.main check  # 執行完整系統診斷")
+    console.print()
     
     console.print("[yellow]場景 1: 首次啟動伺服器[/yellow]")
     console.print("  1. python -m app.main start dc")
@@ -647,6 +652,156 @@ def backup(server_name: str):
         if record and record.error_message:
             console.print(f"錯誤: {record.error_message}")
         raise typer.Exit(1)
+
+
+@app.command()
+def check():
+    """系統診斷 - 檢查框架運行環境和配置
+    
+    檢查項目：
+      • Python 版本和依賴套件
+      • 目錄結構
+      • 配置文件格式
+      • Java 安裝和配置
+      • 伺服器實例
+      • PlayIt 隧道配置
+      • 文件權限
+    
+    範例:
+        python -m app.main check
+    """
+    from .system_check import run_diagnostics
+    run_diagnostics()
+
+
+@app.command()
+def cleanup(server_name: str):
+    """
+    清理孤立的 PID 文件
+    
+    當伺服器或通道進程被強制終止（如使用 taskkill 或系統崩潰）時，
+    PID 文件可能會殘留，導致框架誤認為進程仍在運行。
+    此命令會清理這些孤立的 PID 文件，讓系統恢復正常狀態。
+    
+    使用場景:
+        - 伺服器顯示 "運行中" 但實際沒有進程
+        - 無法正常啟動伺服器（提示已在運行）
+        - 強制終止進程後需要重置狀態
+    
+    範例:
+        python -m app.main cleanup myserver
+    """
+    from ..utils.yaml_loader import load_server_config
+    from rich.panel import Panel
+    from pathlib import Path
+    import psutil
+    import json
+    
+    scanner = get_scanner()
+    instance_path = scanner.find_instance(server_name)
+    
+    if not instance_path:
+        console.print(f"[red]錯誤: 找不到伺服器 '{server_name}'[/red]")
+        raise typer.Exit(1)
+    
+    config = load_server_config(instance_path)
+    if not config:
+        console.print("[red]無法載入伺服器設定[/red]")
+        raise typer.Exit(1)
+    
+    runtime_path = instance_path / "runtime"
+    server_pid_file = runtime_path / "server.pid"
+    tunnel_pid_file = runtime_path / "playit.pid"
+    
+    cleaned = []
+    orphaned = []
+    running = []
+    
+    # 檢查伺服器 PID
+    if server_pid_file.exists():
+        try:
+            with open(server_pid_file, 'r') as f:
+                data = json.load(f)
+                pid = data.get("pid")
+                if pid:
+                    try:
+                        process = psutil.Process(pid)
+                        if process.is_running():
+                            running.append(("伺服器", pid))
+                        else:
+                            orphaned.append(("伺服器", pid, server_pid_file))
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        orphaned.append(("伺服器", pid, server_pid_file))
+        except Exception as e:
+            console.print(f"[yellow]警告: 無法讀取伺服器 PID 文件 - {e}[/yellow]")
+    
+    # 檢查通道 PID
+    if tunnel_pid_file.exists():
+        try:
+            with open(tunnel_pid_file, 'r') as f:
+                data = json.load(f)
+                pid = data.get("pid")
+                if pid:
+                    try:
+                        process = psutil.Process(pid)
+                        if process.is_running():
+                            running.append(("通道", pid))
+                        else:
+                            orphaned.append(("通道", pid, tunnel_pid_file))
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        orphaned.append(("通道", pid, tunnel_pid_file))
+        except Exception as e:
+            console.print(f"[yellow]警告: 無法讀取通道 PID 文件 - {e}[/yellow]")
+    
+    # 清理孤立的 PID 文件
+    if orphaned:
+        console.print(f"\n[yellow]發現 {len(orphaned)} 個孤立的 PID 文件:[/yellow]\n")
+        for name, pid, pid_file in orphaned:
+            console.print(f"  • {name} (PID: {pid}) - 進程不存在")
+            try:
+                pid_file.unlink()
+                cleaned.append(name)
+                console.print(f"    [green]✓ 已清理: {pid_file.name}[/green]")
+            except Exception as e:
+                console.print(f"    [red]✗ 清理失敗: {e}[/red]")
+    
+    # 顯示正在運行的進程
+    if running:
+        console.print(f"\n[blue]正在運行的進程:[/blue]\n")
+        for name, pid in running:
+            console.print(f"  • {name} (PID: {pid}) - 進程正常運行")
+    
+    # 總結
+    if cleaned:
+        console.print(Panel(
+            f"[green]✓ 清理完成[/green]\n\n"
+            f"已清理 {len(cleaned)} 個孤立的 PID 文件\n"
+            f"現在可以正常啟動伺服器了",
+            title=f"🧹 清理成功",
+            border_style="green"
+        ))
+    elif orphaned:
+        console.print(Panel(
+            f"[red]✗ 部分清理失敗[/red]\n\n"
+            f"請檢查檔案權限或手動刪除 PID 文件",
+            title="⚠️  清理失敗",
+            border_style="red"
+        ))
+    elif running:
+        console.print(Panel(
+            f"[blue]進程正在運行[/blue]\n\n"
+            f"所有進程都正常運行中，無需清理\n"
+            f"如需停止伺服器，請使用: stop {server_name}",
+            title="ℹ️  無需清理",
+            border_style="blue"
+        ))
+    else:
+        console.print(Panel(
+            f"[green]✓ 狀態正常[/green]\n\n"
+            f"沒有發現孤立的 PID 文件",
+            title="✓ 檢查完成",
+            border_style="green"
+        ))
 
 
 @app.command()
