@@ -46,6 +46,28 @@ def get_java_resolver():
 
 
 @app.command()
+def setup(force: bool = typer.Option(False, "--force", "-f", help="強制重新初始化（覆蓋現有配置）")):
+    """
+    初始化框架（創建目錄結構和配置文件）
+    
+    首次使用時會自動執行，也可以手動執行以重置配置。
+    
+    範例:
+        python -m app.main setup           # 初始化（如果尚未初始化）
+        python -m app.main setup --force   # 強制重新初始化
+    """
+    from ..core.initializer import run_initialization
+    
+    if force:
+        console.print("[yellow]⚠️  強制重新初始化將覆蓋配置文件模板[/yellow]")
+        if not typer.confirm("確定要繼續嗎？", default=False):
+            console.print("[dim]已取消[/dim]")
+            return
+    
+    run_initialization(force=force)
+
+
+@app.command()
 def info():
     """顯示系統資訊和使用指南"""
     
@@ -81,6 +103,7 @@ def info():
     quick_start.add_column("命令", style="green", width=35)
     quick_start.add_column("說明", width=30)
     
+    quick_start.add_row("0", "閱讀 GETTING_STARTED.txt", "詳細入門指南")
     quick_start.add_row("1", "scan", "掃描所有伺服器")
     quick_start.add_row("2", "list", "列出伺服器名稱")
     quick_start.add_row("3", "start <name>", "啟動伺服器")

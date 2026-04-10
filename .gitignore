@@ -30,8 +30,18 @@ ENV/
 # 建置檔案
 build/
 dist/
-*.spec
 *.egg-info/
+
+# PyInstaller
+*.manifest
+*.exe  # 忽略編譯的執行檔
+
+# 保留 PyInstaller spec 配置（需要版本控制）
+!mc-server-framework.spec
+
+# 發佈檔案
+release/
+*.zip
 
 # IDE
 .vscode/

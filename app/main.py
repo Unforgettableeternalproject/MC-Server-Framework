@@ -11,18 +11,19 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from app.cli.commands import app
+from app.core.initializer import check_initialization, run_initialization
 
 
 def main():
     """主函式"""
-    # 確保必要目錄存在
-    servers_dir = Path("servers")
-    config_dir = Path("config")
-    logs_dir = Path("logs")
-    
-    servers_dir.mkdir(exist_ok=True)
-    config_dir.mkdir(exist_ok=True)
-    logs_dir.mkdir(exist_ok=True)
+    # 檢查框架是否已初始化
+    if not check_initialization():
+        # 首次運行，執行初始化
+        success = run_initialization()
+        if not success:
+            print("初始化失敗，請檢查錯誤訊息")
+            sys.exit(1)
+        print()  # 空行
     
     # 檢查是否有命令行參數
     # sys.argv[0] 是腳本名稱，所以如果只有一個元素表示沒有參數

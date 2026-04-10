@@ -1,4 +1,4 @@
-# MC Server Framework - v0.1.0-alpha (Phase 1 Release)
+# MC Server Framework - v0.2.0 (Phase 2 Release)
 
 "Hey Exera, I made something for managing Minecraft servers! (◕‿◕✿)"
 "Another project? What happened to your last dozen 'amazing ideas'?"
@@ -11,16 +11,17 @@
 
 ## Project Overview
 
-MC Server Framework is a **local Minecraft Java server host management framework** with modular architecture, featuring unified server instance management, automatic backup strategies, Java version switching, and Cloudflare DDNS integration. The project has completed **Phase 1 core implementation** and is ready for production use with essential features fully functional.
+MC Server Framework is a **local Minecraft Java server host management framework** with modular architecture, featuring unified server instance management, automatic backup strategies, Java version switching, Cloudflare DDNS integration, PlayIt.gg tunnel support, and RCON remote console. The project has completed **Phase 2 implementation** with enhanced features including interactive CLI, system diagnostics, and standalone executable packaging.
 
 ## Core Features
 
-✯ **Server Management** (Phase 1 Complete):
+✯ **Server Management**:
 - 🔹 **Multi-Instance Support** - Manage unlimited Minecraft servers in standardized directories
 - 🔹 **Automatic Discovery** - Scan and validate server instances with configuration detection
 - 🔹 **Server Lifecycle** - Start, stop, restart with process management and PID tracking
 - 🔹 **Forge 1.17+ Support** - Intelligent detection and special launch mode for modern Forge
 - 🔹 **Status Monitoring** - Real-time server state, uptime tracking, and health checks
+- 🔹 **Orphaned Process Cleanup** - Automatic detection and cleanup of stale PID files
 
 ✯ **Java Version Management**:
 - 🔹 **Profile System** - Global Java registry with centralized path management
@@ -42,11 +43,25 @@ MC Server Framework is a **local Minecraft Java server host management framework
 - 🔹 **Custom Ports** - Configurable server ports with automatic SRV sync
 - 🔹 **Status Tracking** - DNS update history, error logging, and health monitoring
 
+✯ **RCON Remote Console**:
+- 🔹 **Interactive Console** - Direct command execution with real-time response
+- 🔹 **Single Command Mode** - Send individual commands without entering console
+- 🔹 **Automatic Configuration** - Auto-setup with server.properties integration
+
+✯ **PlayIt.gg Tunnel Support** (CGNAT Bypass):
+- 🔹 **Auto Lifecycle Management** - Tunnel starts/stops with server
+- 🔹 **Agent Integration** - Seamless integration with PlayIt.gg agent
+- 🔹 **DNS Integration** - Combine with Cloudflare for custom domain over tunnel
+- 🔹 **Status Monitoring** - Real-time tunnel health checks
+- 🔹 **Cleanup Tools** - Detect and clean orphaned tunnel processes
+
 ✯ **CLI Interface**:
-- 🔹 **Rich Terminal UI** - Beautiful colored tables and progress indicators
+- 🔹 **Rich Terminal UI** - Beautiful colored tables, panels, and progress indicators
+- 🔹 **Interactive Menu** - User-friendly menu system for all operations
 - 🔹 **Intuitive Commands** - Simple verbs: scan, list, init, start, stop, status, backup
-- 🔹 **Subcommand Structure** - Organized DNS and Java management commands
-- 🔹 **Batch Scripts** - Convenient wrappers for quick access without virtual env
+- 🔹 **Subcommand Structure** - Organized DNS, Java, and tunnel management commands
+- 🔹 **System Diagnostics** - Comprehensive environment and configuration checker
+- 🔹 **First-Run Initialization** - Automatic setup with guided configuration
 
 ## Project Structure
 
@@ -56,14 +71,20 @@ MC Server Framework is a **local Minecraft Java server host management framework
 MC-Server-Framework/
 ├── app/                     # Application source code
 │   ├── cli/                 # CLI command interface
-│   │   └── commands.py      # Command definitions (scan, start, dns, etc.)
+│   │   ├── commands.py      # Command definitions (scan, start, dns, etc.)
+│   │   ├── interactive.py   # Interactive menu system
+│   │   ├── system_check.py  # System diagnostics tool
+│   │   └── network_diag.py  # Network diagnostics
 │   ├── core/                # Core functional modules
 │   │   ├── scanner.py       # Server instance scanner
 │   │   ├── launcher.py      # Server launcher with process management
 │   │   ├── java_resolver.py # Java profile resolver
 │   │   ├── path_resolver.py # Path interface for standardized access
 │   │   ├── backup_manager.py # Backup execution and retention
-│   │   └── dns_manager.py   # DNS update manager (Cloudflare/DuckDNS)
+│   │   ├── dns_manager.py   # DNS update manager (Cloudflare/DuckDNS)
+│   │   ├── rcon_client.py   # RCON remote console client
+│   │   ├── tunnel_manager.py # PlayIt.gg tunnel manager
+│   │   └── initializer.py   # First-run initialization system
 │   ├── models/              # Data models
 │   │   ├── server_config.py # Server configuration schema
 │   │   ├── java_profile.py  # Java registry schema
@@ -89,13 +110,15 @@ MC-Server-Framework/
 ├── templates/               # Configuration templates
 │   └── default_server.yml   # Default server configuration
 ├── docs/                    # Documentation
-│   ├── SPEC.md              # Complete specification
-│   ├── DNS-SETUP.md         # DNS configuration guide
-│   ├── DNS-TESTING.md       # DNS testing procedures
-│   └── PACKAGING.md         # Build and packaging guide
+│   └── SPEC.md              # Complete specification
 ├── requirements.txt         # Python dependencies
-├── build.py                 # PyInstaller build script
-├── setup.py                 # Package installation script
+├── mc-server-framework.spec # PyInstaller configuration
+├── build.ps1                # PowerShell build script
+├── build.bat                # Windows batch build wrapper
+├── package.ps1              # Release packaging script
+├── BUILD.md                 # Build and packaging guide
+├── GETTING_STARTED.txt      # User quick start guide (auto-generated)
+├── QUICK_BUILD.md           # Quick build reference
 ├── mc-host.bat              # Windows batch wrapper
 ├── mc-host.ps1              # PowerShell wrapper
 └── README.md                # This file
@@ -198,13 +221,13 @@ python -m app.main restart <server-name>
 python -m app.main status <server-name>
 
 # Create backup
-python -m app.main backup <server-name>
+python -m app.main backup create <server-name>
 
-# Validate server configuration
-python -m app.main validate <server-name>
+# Check system diagnostics
+python -m app.main check
 
-# Show important paths
-python -m app.main paths <server-name>
+# Clean up orphaned PIDs
+python -m app.main cleanup <server-name>
 ```
 
 ### DNS Management
@@ -223,6 +246,32 @@ python -m app.main dns status <server-name>
 python -m app.main dns test <server-name>
 ```
 
+### RCON Console
+
+```bash
+# Enter interactive RCON console
+python -m app.main console <server-name>
+
+# Send single command
+python -m app.main send <server-name> "say Hello"
+```
+
+### Tunnel Management
+
+```bash
+# Check tunnel status
+python -m app.main tunnel status <server-name>
+
+# Start tunnel manually
+python -m app.main tunnel start <server-name>
+
+# Stop tunnel
+python -m app.main tunnel stop <server-name>
+
+# Clean up orphaned tunnel
+python -m app.main tunnel cleanup <server-name>
+```
+
 ### Java Management
 
 ```bash
@@ -233,10 +282,23 @@ python -m app.main java list
 python -m app.main java validate
 ```
 
+### System Tools
+
+```bash
+# Run system diagnostics
+python -m app.main check
+
+# View system information
+python -m app.main info
+
+# Network diagnostics
+python -m app.main diagnose <server-name>
+```
+
 ## Development Status
 
-### ✅ Phase 1 - Core Functionality (Completed - v0.1.0-alpha)
-**Overall Completion**: 95%
+### ✅ Phase 1 - Core Functionality (Completed - v0.1.0)
+**Overall Completion**: 100%
 
 **Completed Objectives**:
 - ✅ **Module Architecture** (100%)
@@ -287,8 +349,50 @@ python -m app.main java validate
 - ⚠️ No sub-workflow system
 - ⚠️ No automatic server type detection beyond Forge
 
-### 📅 Phase 2 - Enhanced Features (Planned)
-**Target**: v0.2.0-beta
+### ✅ Phase 2 - Enhanced Features (Completed - v0.2.0)
+**Overall Completion**: 90%
+
+**Completed Objectives**:
+- ✅ **RCON Integration** (100%)
+  - Interactive console mode
+  - Single command execution
+  - Auto-configuration with server.properties
+  
+- ✅ **PlayIt.gg Tunnel Support** (95%)
+  - Auto-start/stop with server lifecycle
+  - Agent integration
+  - DNS combination support
+  - Orphaned process detection
+  
+- ✅ **Interactive CLI** (100%)
+  - Menu-driven interface
+  - Smart server selection
+  - Confirmation prompts
+  - Hierarchical navigation
+  
+- ✅ **System Diagnostics** (100%)
+  - Environment validation
+  - Configuration checking
+  - Dependency verification
+  - Fix suggestions
+  
+- ✅ **First-Run Initialization** (100%)
+  - Automatic directory creation
+  - Configuration template generation
+  - Guided setup documentation
+  
+- ✅ **Orphaned Process Management** (100%)
+  - Auto-detection of stale PIDs
+  - Automatic cleanup
+  - Manual cleanup command
+  
+- ✅ **Network Diagnostics** (85%)
+  - DNS resolution testing
+  - Connection troubleshooting
+  - Issue identification
+
+### 📅 Phase 3 - Advanced Features (Planned)
+**Target**: v0.3.0
 
 **Planned Objectives**:
 - 🔹 **Intelligent Detection** (Target: 85%)
@@ -348,6 +452,18 @@ java:
   mode: "profile"                 # Use profile from registry
   profile: "java21"               # Profile name
 
+rcon:
+  enabled: false                  # Enable RCON remote console
+  host: "localhost"
+  port: 25575
+  password: ""                    # Must match server.properties
+
+tunnel:
+  enabled: false                  # Enable PlayIt.gg tunnel
+  type: "playit"                  # playit, ngrok, cloudflared
+  auto_start: true                # Start/stop with server
+  executable_path: ""             # Agent path (optional, uses global config)
+
 launch:
   min_memory: "2G"
   max_memory: "8G"
@@ -406,41 +522,45 @@ profiles:
 
 ### Build Standalone Executable (.exe)
 
-```bash
-# Install PyInstaller
-pip install pyinstaller
+```powershell
+# Quick build (recommended)
+.\build.ps1
 
-# Run build script
-python build.py
+# Or use batch file
+build.bat
 
-# Output: dist/mc-host-package/mc-host.exe
+# Output: dist/mc-server-framework/mc-server-framework.exe
 ```
 
 The packaged version includes:
-- Standalone executable (no Python required)
+- Standalone executable (~7MB, no Python required)
 - Configuration templates
-- Complete documentation
-- Startup scripts
+- First-run initialization
+- All dependencies bundled
 
-### Install as Python Package
+### Create Release Package
 
-```bash
-# Install in development mode
-pip install -e .
+```powershell
+# After building, create distributable ZIP
+.\package.ps1 -Version "v0.2.0"
 
-# Use as system command
-mc-host scan
-mc-host start my-server
+# Output: release/MC-Server-Framework-v0.2.0-Windows-x64.zip
 ```
 
-See [docs/PACKAGING.md](docs/PACKAGING.md) for detailed build instructions.
+Release package includes:
+- Executable and dependencies
+- Pre-created directory structure
+- User documentation (使用說明.txt)
+- README and LICENSE
+
+See [BUILD.md](BUILD.md) for detailed build instructions and troubleshooting.
 
 ## Documentation
 
 - **System Specification**: [docs/SPEC.md](docs/SPEC.md) - Complete project specification
-- **DNS Setup Guide**: [docs/DNS-SETUP.md](docs/DNS-SETUP.md) - Cloudflare DNS configuration
-- **DNS Testing**: [docs/DNS-TESTING.md](docs/DNS-TESTING.md) - Step-by-step testing procedures
-- **Packaging Guide**: [docs/PACKAGING.md](docs/PACKAGING.md) - Building and distribution
+- **Build Guide**: [BUILD.md](BUILD.md) - PyInstaller packaging and distribution
+- **Quick Build**: [QUICK_BUILD.md](QUICK_BUILD.md) - Fast build reference
+- **Getting Started**: Run `python -m app.main info` for in-app documentation
 
 ## Troubleshooting
 
