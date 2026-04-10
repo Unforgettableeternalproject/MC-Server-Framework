@@ -24,8 +24,15 @@ def main():
     config_dir.mkdir(exist_ok=True)
     logs_dir.mkdir(exist_ok=True)
     
-    # 啟動 CLI
-    app()
+    # 檢查是否有命令行參數
+    # sys.argv[0] 是腳本名稱，所以如果只有一個元素表示沒有參數
+    if len(sys.argv) == 1:
+        # 沒有參數，啟動互動式介面
+        from app.cli.interactive import run_interactive
+        run_interactive()
+    else:
+        # 有參數，使用標準 CLI
+        app()
 
 
 if __name__ == "__main__":
