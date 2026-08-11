@@ -151,9 +151,13 @@ def info():
     
     # 備份管理
     console.print("\n[cyan]● 備份管理[/cyan]")
-    console.print("  backup create <name> 創建備份")
-    console.print("  backup list <name>   列出備份")
-    console.print("  backup restore <name> <file>  還原備份")
+    console.print("  backup run <name>            立即備份")
+    console.print("  backup list <name>           列出備份")
+    console.print("  backup restore <name> [#]    還原備份（需先停止伺服器）")
+    console.print("  backup status <name>         查看備份設定與排程狀態")
+    console.print("  backup cleanup <name>        依保留策略清理舊備份")
+    console.print("  backup schedule-start <name> 啟動排程守護")
+    console.print("  backup schedule-stop <name>  停止排程守護")
     
     # 診斷工具
     console.print("\n[cyan]● 診斷工具[/cyan]")
@@ -640,41 +644,318 @@ def status(server_name: str):
     console.print()
 
 
-@app.command()
-def backup(server_name: str):
-    """執行備份"""
+backup_app = typer.Typer()
+app.add_typer(backup_app, name="backup", help="備份管理指令")
+
+
+def _load_backup_manager(server_name: str):
+    """載入指定伺服器的備份管理器與設定"""
     from ..core.launcher import ServerLauncher
     from ..core.backup_manager import BackupManager
     from ..utils.yaml_loader import load_server_config
-    
+
     scanner = get_scanner()
     instance_path = scanner.find_instance(server_name)
-    
+
     if not instance_path:
         console.print(f"[red]錯誤: 找不到伺服器 '{server_name}'[/red]")
         raise typer.Exit(1)
-    
+
     config = load_server_config(instance_path)
     if not config:
         console.print("[red]無法載入伺服器設定[/red]")
         raise typer.Exit(1)
-    
-    # 建立備份管理器
+
     java_resolver = get_java_resolver()
     launcher = ServerLauncher(config, java_resolver)
-    backup_manager = BackupManager(config, launcher)
-    
-    # 執行備份
-    record = backup_manager.create_backup()
-    if record and record.is_success():
-        console.print(f"[green]✓ 備份完成: {record.backup_file.name}[/green]")
+    return config, BackupManager(config, launcher)
+
+
+@backup_app.command("run")
+def backup_run(
+    server_name: str,
+    force: bool = typer.Option(False, "--force", "-f", help="忽略 enabled / provider 設定強制備份")
+):
+    """執行一次備份"""
+    _, backup_manager = _load_backup_manager(server_name)
+
+    record = backup_manager.create_backup(force=force)
+
+    if record is None:
+        raise typer.Exit(1)
+
+    if record.is_success():
+        console.print(f"\n[green]✓ 備份完成: {record.backup_file.name}[/green]")
         console.print(f"大小: {record.get_size_mb():.2f} MB")
         console.print(f"耗時: {record.duration_seconds:.1f} 秒")
     else:
-        console.print("[red]備份失敗[/red]")
-        if record and record.error_message:
+        console.print("\n[red]備份失敗[/red]")
+        if record.error_message:
             console.print(f"錯誤: {record.error_message}")
         raise typer.Exit(1)
+
+
+@backup_app.command("list")
+def backup_list(server_name: str):
+    """列出所有備份"""
+    _, backup_manager = _load_backup_manager(server_name)
+
+    backups = backup_manager.list_backups()
+
+    if not backups:
+        console.print(f"[yellow]{server_name} 目前沒有任何備份[/yellow]")
+        console.print(f"[dim]執行 'backup run {server_name}' 建立第一份備份[/dim]")
+    else:
+        table = Table(title=f"{server_name} 的備份", show_lines=False)
+        table.add_column("#", style="cyan", justify="right")
+        table.add_column("檔案", style="white")
+        table.add_column("建立時間", style="dim")
+        table.add_column("大小", justify="right")
+        table.add_column("天數", justify="right")
+
+        total_mb = 0.0
+        for index, backup_file in enumerate(backups, start=1):
+            info = backup_manager.get_backup_info(backup_file)
+            total_mb += info['size_mb']
+            table.add_row(
+                str(index),
+                info['name'],
+                info['created_at'].strftime("%Y-%m-%d %H:%M:%S"),
+                f"{info['size_mb']:.2f} MB",
+                str(info['age_days'])
+            )
+
+        console.print()
+        console.print(table)
+        console.print(f"[dim]共 {len(backups)} 份，合計 {total_mb:.2f} MB[/dim]")
+
+    # 最近的備份紀錄（含失敗紀錄）
+    history = backup_manager.read_history()[:5]
+    if history:
+        console.print("\n[bold]最近的備份紀錄[/bold]")
+        for entry in history:
+            status = entry.get('status')
+            colour = "green" if status == "success" else "red"
+            line = f"  [{colour}]{status}[/{colour}]  {entry.get('created_at')}  ({entry.get('trigger')})"
+            if entry.get('error'):
+                line += f"  [red]{entry['error']}[/red]"
+            console.print(line)
+
+
+@backup_app.command("restore")
+def backup_restore(
+    server_name: str,
+    backup: Optional[str] = typer.Argument(None, help="備份編號或檔名（省略則使用最新一份）"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="略過確認提示"),
+    no_safety_backup: bool = typer.Option(False, "--no-safety-backup", help="還原前不建立安全備份")
+):
+    """還原備份（伺服器必須先停止）"""
+    from rich.prompt import Confirm
+    from ..core.backup_scheduler import BackupScheduler
+
+    config, backup_manager = _load_backup_manager(server_name)
+
+    # 排程守護程序若在背景執行，可能在還原途中觸發備份，兩邊會互相踩到檔案
+    scheduler = BackupScheduler(config)
+    if scheduler.is_running():
+        console.print("[red]錯誤: 備份排程守護程序正在執行，可能在還原途中觸發備份[/red]")
+        console.print(f"[dim]請先執行 'backup schedule-stop {server_name}' 再還原[/dim]")
+        raise typer.Exit(1)
+
+    backup_file = backup_manager.resolve_backup(backup)
+    if not backup_file:
+        if backup:
+            console.print(f"[red]錯誤: 找不到備份 '{backup}'[/red]")
+        else:
+            console.print(f"[red]錯誤: {server_name} 沒有任何備份[/red]")
+        console.print(f"[dim]執行 'backup list {server_name}' 查看可用備份[/dim]")
+        raise typer.Exit(1)
+
+    info = backup_manager.get_backup_info(backup_file)
+    console.print("\n[bold yellow]即將還原備份[/bold yellow]")
+    console.print(f"  備份檔: {info['name']}")
+    console.print(f"  建立於: {info['created_at']:%Y-%m-%d %H:%M:%S}（{info['age_days']} 天前）")
+    console.print(f"  大小:   {info['size_mb']:.2f} MB")
+    console.print(f"  目標:   {backup_manager.paths.get_server_root()}")
+    console.print("\n[red]備份中包含的檔案將覆蓋伺服器目錄中的現有內容。[/red]")
+    if not no_safety_backup:
+        console.print("[dim]還原前會自動建立一份安全備份。[/dim]")
+
+    if not yes:
+        console.print()
+        if not Confirm.ask("確定要還原嗎？", default=False):
+            console.print("[yellow]已取消[/yellow]")
+            raise typer.Exit(0)
+
+    console.print()
+    if backup_manager.restore_backup(backup_file, safety_backup=not no_safety_backup):
+        console.print(f"\n[green]✓ 已還原 {info['name']}[/green]")
+    else:
+        console.print("\n[red]還原失敗[/red]")
+        raise typer.Exit(1)
+
+
+@backup_app.command("cleanup")
+def backup_cleanup(server_name: str):
+    """依保留策略清理舊備份"""
+    config, backup_manager = _load_backup_manager(server_name)
+
+    retention = config.backup.retention
+    console.print(
+        f"保留策略: 最新 {retention.keep_last} 份 / {retention.keep_days} 天內"
+    )
+
+    deleted = backup_manager.cleanup_old_backups()
+    if deleted:
+        console.print(f"[green]✓ 已刪除 {deleted} 份舊備份[/green]")
+    else:
+        console.print("[dim]沒有需要清理的備份[/dim]")
+
+
+@backup_app.command("status")
+def backup_status(server_name: str):
+    """查看備份設定與排程狀態"""
+    from ..core.backup_scheduler import BackupScheduler
+
+    config, backup_manager = _load_backup_manager(server_name)
+    scheduler = BackupScheduler(config)
+    status = scheduler.get_status()
+
+    console.print()
+    console.print(f"[bold cyan]{server_name} 備份狀態[/bold cyan]\n")
+
+    console.print("[bold]設定[/bold]")
+    console.print(f"  啟用:     {'[green]是[/green]' if config.backup.enabled else '[dim]否[/dim]'}")
+    console.print(f"  模式:     {config.backup.mode}")
+    console.print(f"  提供者:   {config.backup.provider}")
+    console.print(f"  排程:     {config.backup.schedule or '[dim](未設定)[/dim]'}")
+    console.print(f"  壓縮:     {config.backup.compression}")
+    console.print(
+        f"  保留:     最新 {config.backup.retention.keep_last} 份 / "
+        f"{config.backup.retention.keep_days} 天內"
+    )
+
+    skip_reason = backup_manager.get_skip_reason()
+    if skip_reason:
+        console.print(f"\n[yellow]⚠️  目前不會執行備份: {skip_reason}[/yellow]")
+
+    console.print("\n[bold]排程[/bold]")
+    mode_is_scheduled = str(config.backup.mode).lower() == "scheduled"
+
+    if status['error']:
+        console.print(f"  [red]設定錯誤: {status['error']}[/red]")
+    elif not status['description']:
+        console.print("  [dim]未設定排程（backup.mode 需為 scheduled 且填寫 schedule）[/dim]")
+    elif not mode_is_scheduled:
+        console.print(f"  規則:     {status['description']}")
+        console.print(
+            f"  [yellow]⚠️  schedule 已設定，但 backup.mode 是 '{config.backup.mode}'，"
+            "排程不會啟動[/yellow]"
+        )
+        console.print("  [dim]將 backup.mode 改為 scheduled 才會生效[/dim]")
+    else:
+        console.print(f"  規則:     {status['description']}")
+        if status['running']:
+            console.print(f"  守護程序: [green]✓ 執行中[/green] (PID: {status['pid']})")
+        else:
+            console.print("  守護程序: [yellow]✗ 未執行[/yellow]")
+        console.print(f"  下次備份: {status['next_run'] or '[dim]未知[/dim]'}")
+        console.print(f"  上次執行: {status['last_run'] or '[dim]尚未執行[/dim]'}")
+        if status['last_status']:
+            colour = {"success": "green", "skipped": "yellow"}.get(status['last_status'], "red")
+            line = f"  上次結果: [{colour}]{status['last_status']}[/{colour}]"
+            if status['last_status'] == "skipped" and status.get('last_skip_reason'):
+                line += f" [dim]({status['last_skip_reason']})[/dim]"
+            console.print(line)
+        console.print(f"  守護日誌: [dim]{status['log_file']}[/dim]")
+
+    console.print("\n[bold]玩家活動[/bold]")
+    if not status['skip_if_no_players']:
+        console.print("  [dim]未啟用無人跳過（skip_if_no_players: false），排程一律備份[/dim]")
+    else:
+        report = scheduler.get_activity_report(backup_manager)
+
+        online = report['online']
+        if online is None:
+            console.print("  目前在線: [dim]無法查詢（伺服器未執行或 RCON 不可用）[/dim]")
+        else:
+            console.print(f"  目前在線: {online} 人")
+
+        last_activity = report['last_activity']
+        console.print(
+            f"  最後活動: {last_activity:%Y-%m-%d %H:%M:%S}" if last_activity
+            else "  最後活動: [dim]找不到玩家存檔[/dim]"
+        )
+        reference = report['reference']
+        console.print(
+            f"  比較基準: {reference:%Y-%m-%d %H:%M:%S}（最新備份）" if reference
+            else "  比較基準: [dim]尚無備份[/dim]"
+        )
+
+        should_run, reason = scheduler.should_run_now(backup_manager, report=report)
+        if should_run:
+            console.print(f"  下次排程: [green]會備份[/green] [dim]({reason})[/dim]")
+        else:
+            console.print(f"  下次排程: [yellow]會跳過[/yellow] [dim]({reason})[/dim]")
+
+    backups = backup_manager.list_backups()
+    console.print(f"\n[bold]備份檔[/bold]")
+    if backups:
+        newest = backup_manager.get_backup_info(backups[0])
+        total_mb = sum(b.stat().st_size for b in backups) / (1024 * 1024)
+        console.print(f"  數量:     {len(backups)} 份（合計 {total_mb:.2f} MB）")
+        console.print(f"  最新:     {newest['name']} — {newest['created_at']:%Y-%m-%d %H:%M:%S}")
+    else:
+        console.print("  [yellow]尚無備份[/yellow]")
+    console.print()
+
+
+@backup_app.command("schedule-start")
+def backup_schedule_start(server_name: str):
+    """啟動備份排程守護程序"""
+    from ..core.backup_scheduler import BackupScheduler
+
+    config, _ = _load_backup_manager(server_name)
+    scheduler = BackupScheduler(config)
+
+    if str(config.backup.mode).lower() != "scheduled":
+        console.print("[red]錯誤: backup.mode 不是 'scheduled'[/red]")
+        console.print("[dim]請在 server.yml 中設定 backup.mode: scheduled 與 backup.schedule[/dim]")
+        raise typer.Exit(1)
+
+    if not config.backup.schedule:
+        console.print("[red]錯誤: 未設定 backup.schedule[/red]")
+        console.print("[dim]例如 schedule: \"6h\"、\"daily@04:00\" 或 \"0 4 * * *\"[/dim]")
+        raise typer.Exit(1)
+
+    if not scheduler.start():
+        raise typer.Exit(1)
+
+
+@backup_app.command("schedule-stop")
+def backup_schedule_stop(server_name: str):
+    """停止備份排程守護程序"""
+    from ..core.backup_scheduler import BackupScheduler
+
+    config, _ = _load_backup_manager(server_name)
+    scheduler = BackupScheduler(config)
+
+    if not scheduler.is_running():
+        console.print("[yellow]備份排程並未執行[/yellow]")
+        return
+
+    if not scheduler.stop():
+        raise typer.Exit(1)
+
+
+@backup_app.command("daemon", hidden=True)
+def backup_daemon(server_name: str):
+    """（內部使用）在前景執行備份排程迴圈"""
+    from ..core.backup_scheduler import BackupScheduler
+
+    config, _ = _load_backup_manager(server_name)
+    scheduler = BackupScheduler(config)
+    raise typer.Exit(scheduler.run_forever())
 
 
 @app.command()

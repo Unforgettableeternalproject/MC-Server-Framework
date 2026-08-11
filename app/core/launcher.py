@@ -314,7 +314,10 @@ class ServerLauncher:
         # 更新狀態
         self.status.pid = pid
         self.status.update_state(ServerState.STARTING)
-        
+
+        # 啟動備份排程（如果設定為 scheduled）
+        self._start_backup_scheduler()
+
         if not attach:
             print(f"伺服器已啟動 (PID: {pid})")
             print(f"日誌檔案: {log_file}")
@@ -362,7 +365,13 @@ class ServerLauncher:
     
     def stop(self, timeout: int = 30) -> bool:
         """
-        停止伺服器
+        停止伺服器（優雅關機）
+        
+        使用以下策略：
+        1. 優先嘗試透過 RCON 發送 stop 命令（如果已啟用）
+        2. 如果 RCON 不可用，嘗試透過 stdin 發送命令
+        3. 等待伺服器正常關閉（保存數據）
+        4. 如果超時，最後才使用強制終止
         
         Args:
             timeout: 逾時秒數
@@ -375,7 +384,10 @@ class ServerLauncher:
             return False
         
         self.status.update_state(ServerState.STOPPING)
-        
+
+        # 停止備份排程
+        self._stop_backup_scheduler()
+
         # 停止隧道（如果啟用且設為自動停止）
         if (hasattr(self.config, 'tunnel') and 
             self.config.tunnel.enabled and 
@@ -396,32 +408,162 @@ class ServerLauncher:
                 print("⚠️  隧道停止失敗")
             print("="*60 + "\n")
         
-        # 透過指令停止
-        if self.process:
-            stop_cmd = self.config.launch.stop_command
-            print(f"發送停止指令: {stop_cmd}")
-            send_command(self.process, stop_cmd)
-            
-            # 等待程序結束
+        # 嘗試優雅關機
+        graceful_stop_success = False
+        
+        # 策略 1: 嘗試透過 RCON 發送 stop 命令
+        if hasattr(self.config, 'rcon') and self.config.rcon.enabled:
+            graceful_stop_success = self._try_rcon_stop()
+        
+        # 策略 2: 如果 RCON 失敗或不可用，嘗試透過 stdin 發送命令
+        if not graceful_stop_success and self.process:
+            graceful_stop_success = self._try_stdin_stop()
+        
+        # 等待程序結束
+        if graceful_stop_success:
+            print(f"等待伺服器保存數據並關閉（最多 {timeout} 秒）...")
             try:
-                self.process.wait(timeout=timeout)
+                # 等待進程結束
+                if self.process:
+                    self.process.wait(timeout=timeout)
+                else:
+                    # 如果沒有 process 物件，透過 PID 檢查進程狀態
+                    import time
+                    start_time = time.time()
+                    while time.time() - start_time < timeout:
+                        if not is_process_running(self.status.pid):
+                            break
+                        time.sleep(0.5)
+                    else:
+                        raise subprocess.TimeoutExpired(None, timeout)
+                
                 self.status.update_state(ServerState.STOPPED)
                 self._remove_pid()
-                print("伺服器已正常停止")
+                print("✓ 伺服器已正常停止（數據已保存）")
                 return True
             except subprocess.TimeoutExpired:
-                print(f"警告: 伺服器未在 {timeout} 秒內停止，嘗試強制終止")
+                print(f"⚠️  警告: 伺服器未在 {timeout} 秒內停止")
         
-        # 強制終止
+        # 策略 3: 強制終止（作為最後手段）
+        print("嘗試強制終止進程...")
         if self.status.pid:
             if kill_process(self.status.pid, force=True):
                 self.status.update_state(ServerState.STOPPED)
                 self._remove_pid()
-                print("伺服器已強制停止")
+                print("⚠️  伺服器已強制停止（可能有數據未保存）")
                 return True
         
         self.status.update_state(ServerState.ERROR, "無法停止伺服器")
         return False
+    
+    def _start_backup_scheduler(self):
+        """啟動備份排程守護程序（僅在 backup.mode 為 scheduled 時）"""
+        backup_config = getattr(self.config, 'backup', None)
+        if not backup_config or not backup_config.enabled:
+            return
+        if str(backup_config.mode).lower() != "scheduled":
+            return
+
+        from ..core.backup_scheduler import BackupScheduler
+
+        print("\n" + "=" * 60)
+        print("備份排程")
+        print("=" * 60)
+
+        scheduler = BackupScheduler(self.config)
+        if not backup_config.schedule:
+            print("⚠️  backup.mode 為 scheduled 但未設定 backup.schedule，排程未啟動")
+        elif scheduler.start():
+            status = scheduler.get_status()
+            if status.get('next_run'):
+                print(f"下次備份時間: {status['next_run']}")
+        print("=" * 60 + "\n")
+
+    def _stop_backup_scheduler(self):
+        """停止備份排程守護程序"""
+        try:
+            from ..core.backup_scheduler import BackupScheduler
+
+            scheduler = BackupScheduler(self.config)
+            if scheduler.is_running():
+                scheduler.stop()
+        except Exception as e:
+            print(f"⚠️  備份排程停止失敗: {e}")
+
+    def _try_rcon_stop(self) -> bool:
+        """
+        嘗試透過 RCON 發送 stop 命令
+        
+        Returns:
+            是否成功發送命令
+        """
+        try:
+            from ..core.rcon_manager import RCONManager, RCONError, get_rcon_config_from_properties
+            
+            # 先從 server.properties 讀取 RCON 配置（可能包含自動生成的密碼）
+            properties_file = self.paths.get_server_properties()
+            rcon_config = None
+            
+            if properties_file.exists():
+                rcon_config = get_rcon_config_from_properties(properties_file)
+            
+            # 如果 server.properties 中有配置且已啟用，優先使用
+            if rcon_config and rcon_config['enabled'] and rcon_config['password']:
+                host = self.config.rcon.host
+                port = rcon_config['port']
+                password = rcon_config['password']
+            else:
+                # 使用配置文件中的設定
+                host = self.config.rcon.host
+                port = self.config.rcon.port
+                password = self.config.rcon.password
+            
+            if not password:
+                print("⚠️  RCON 密碼未設定，跳過 RCON 關機方式")
+                return False
+            
+            print(f"嘗試透過 RCON 發送 stop 命令 ({host}:{port})...")
+            
+            # 建立 RCON 連接並發送 stop 命令
+            rcon = RCONManager(host=host, port=port, password=password)
+            rcon.connect(timeout=3.0)
+            
+            # 發送 stop 命令（Minecraft 接受不帶 / 的命令）
+            response = rcon.send_command("stop")
+            rcon.disconnect()
+            
+            print(f"✓ RCON stop 命令已發送")
+            if response:
+                print(f"  伺服器回應: {response}")
+            return True
+            
+        except RCONError as e:
+            print(f"⚠️  RCON 發送失敗: {e}")
+            return False
+        except Exception as e:
+            print(f"⚠️  RCON 發送失敗: {e}")
+            return False
+    
+    def _try_stdin_stop(self) -> bool:
+        """
+        嘗試透過 stdin 發送 stop 命令
+        
+        Returns:
+            是否成功發送命令
+        """
+        try:
+            stop_cmd = self.config.launch.stop_command
+            print(f"嘗試透過 stdin 發送停止指令: {stop_cmd}")
+            
+            if send_command(self.process, stop_cmd):
+                print(f"✓ stdin stop 命令已發送")
+                return True
+            else:
+                print(f"⚠️  stdin 發送失敗")
+                return False
+        except Exception as e:
+            print(f"⚠️  stdin 發送失敗: {e}")
+            return False
     
     def restart(self) -> bool:
         """

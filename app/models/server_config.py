@@ -73,7 +73,7 @@ class BackupHooks:
 @dataclass
 class BackupRetention:
     """備份保留策略"""
-    keep_last: int = 10
+    keep_last: int = 5
     keep_days: int = 14
 
 
@@ -84,6 +84,9 @@ class BackupConfig:
     mode: str = "manual"  # manual, scheduled, disabled
     provider: str = "internal"  # internal, external, disabled
     schedule: Optional[str] = None
+    # 排程備份時，若自上次備份以來都沒有玩家玩過就跳過（避免無人時堆積重複備份）
+    # 依據 world/playerdata 等玩家存檔的 mtime 判斷；無法判斷時一律照常備份
+    skip_if_no_players: bool = True
     retention: BackupRetention = field(default_factory=BackupRetention)
     compression: str = "zip"
     include: List[str] = field(default_factory=lambda: [

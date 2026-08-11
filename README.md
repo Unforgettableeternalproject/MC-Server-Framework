@@ -220,15 +220,65 @@ python -m app.main restart <server-name>
 # Check server status
 python -m app.main status <server-name>
 
-# Create backup
-python -m app.main backup create <server-name>
+# Validate server configuration
+python -m app.main validate <server-name>
 
-# Check system diagnostics
-python -m app.main check
-
-# Clean up orphaned PIDs
-python -m app.main cleanup <server-name>
+# Show important paths
+python -m app.main paths <server-name>
 ```
+
+### Backup Management
+
+```bash
+# Create a backup now
+python -m app.main backup run <server-name>
+python -m app.main backup run <server-name> --force   # ignore enabled/provider settings
+
+# List backups (plus the most recent backup attempts, including failures)
+python -m app.main backup list <server-name>
+
+# Restore a backup — server must be stopped
+python -m app.main backup restore <server-name>       # newest backup
+python -m app.main backup restore <server-name> 3     # by number from `backup list`
+python -m app.main backup restore <server-name> mysrv_2026-08-11_04-00-00.zip
+
+# Backup settings, schedule state, next/last run
+python -m app.main backup status <server-name>
+
+# Apply the retention policy manually
+python -m app.main backup cleanup <server-name>
+
+# Scheduled backups — the daemon also starts/stops automatically with the server
+python -m app.main backup schedule-start <server-name>
+python -m app.main backup schedule-stop <server-name>
+```
+
+Scheduled backups run in a detached background process. Set `backup.mode: scheduled` and
+`backup.schedule` in `server.yml`; the daemon then starts automatically on `start` and stops
+on `stop`. Supported schedule syntax:
+
+| Syntax | Meaning |
+|---|---|
+| `"30m"` / `"6h"` / `"1d"` / `"90s"` | Fixed interval (minimum 60 seconds) |
+| `"daily@04:00"` | Every day at 04:00 |
+| `"hourly@:30"` | Every hour at minute 30 |
+| `"0 4 * * *"` | Cron (minute hour day month weekday), supports `*` `,` `-` `/` |
+
+With `skip_if_no_players: true` (the default), a scheduled run is skipped when nobody has played
+since the last backup — an idle server no longer accumulates identical archives. Activity is
+detected from the mtime of `world/playerdata`, `world/stats` and `world/advancements`, which the
+server rewrites on player logout and on every autosave. That is a persistent record rather than a
+sample, so even a short session between two scheduled runs is caught, and it works without RCON.
+As an extra signal, RCON is queried once per scheduled run to catch players who are online right
+now. Anything indeterminate (no player data on disk, no previous backup) runs the backup anyway —
+missing a backup is worse than taking a redundant one. Manual `backup run` is never skipped.
+
+The newest backup is never deleted by the retention policy: an idle server stops producing new
+backups, so applying `keep_days` blindly could otherwise leave you with none at all.
+
+Restore is non-destructive by default: it takes a safety backup first, and moves the files it is
+about to overwrite into `servers/<name>/temp/restore_<timestamp>/` instead of deleting them.
+Files not covered by `backup.include` (such as `server.jar` and `mods/`) are left untouched.
 
 ### DNS Management
 
@@ -472,10 +522,13 @@ launch:
 
 backup:
   enabled: true
+  mode: "scheduled"               # manual, scheduled, disabled
   provider: "internal"            # internal, external, disabled
+  schedule: "6h"                  # 30m / 6h / 1d / daily@04:00 / hourly@:30 / cron "0 4 * * *"
+  skip_if_no_players: true        # Skip a scheduled run if nobody played since the last backup
   retention:
-    keep_last: 10                 # Keep last 10 backups
-    keep_days: 14                 # Keep backups from last 14 days
+    keep_last: 5                  # Keep last 5 backups
+    keep_days: 14                 # Delete backups older than 14 days
   include:
     - "world*"                    # Backup patterns
     - "server.properties"

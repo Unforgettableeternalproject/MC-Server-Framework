@@ -241,11 +241,18 @@ def create_default_server_config(server_name: str, instance_path: Path) -> bool:
         },
         'backup': {
             'enabled': True,
+            # manual = 只在手動執行 'backup run' 時備份
+            # scheduled = 隨伺服器啟動排程守護，依 schedule 自動備份
             'mode': 'manual',
             'provider': 'internal',
+            # mode 為 scheduled 時必填
+            # 支援 '30m' / '6h' / '1d' / 'daily@04:00' / 'hourly@:30' / cron '0 4 * * *'
             'schedule': None,
+            # 排程備份時，自上次備份以來沒有玩家玩過就跳過
+            # （依玩家存檔的 mtime 判斷；無法判斷時會照常備份）
+            'skip_if_no_players': True,
             'retention': {
-                'keep_last': 10,
+                'keep_last': 5,
                 'keep_days': 14
             },
             'compression': 'zip',

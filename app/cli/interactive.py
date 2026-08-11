@@ -402,32 +402,58 @@ def handle_java_menu():
 def handle_backup_menu():
     """處理備份選單"""
     console.print("[bold cyan]備份管理[/bold cyan]\n")
-    console.print("1. 創建備份")
+    console.print("1. 立即備份")
     console.print("2. 列出備份")
     console.print("3. 還原備份")
+    console.print("4. 備份狀態與排程")
+    console.print("5. 清理舊備份")
+    console.print("6. 啟動排程守護")
+    console.print("7. 停止排程守護")
     console.print("0. 返回")
     console.print()
-    
-    choice = Prompt.ask("請選擇操作", choices=["0", "1", "2", "3"], default="0")
-    
+
+    choice = Prompt.ask(
+        "請選擇操作",
+        choices=["0", "1", "2", "3", "4", "5", "6", "7"],
+        default="0"
+    )
+
     console.print()
-    
+
     if choice == "0":
         return
-    
+
     server = select_server()
     if not server:
         return
-    
+
     console.print()
-    
+
     if choice == "1":
-        run_command(f"backup {server}")
+        run_command(f"backup run {server}")
     elif choice == "2":
-        console.print(f"[yellow]查看備份: servers/{server}/backups/[/yellow]")
+        run_command(f"backup list {server}")
     elif choice == "3":
-        console.print("[yellow]還原備份功能開發中...[/yellow]")
-    
+        run_command(f"backup list {server}")
+        console.print()
+        target = Prompt.ask(
+            "[dim]輸入要還原的備份編號（留空 = 最新一份，輸入 c 取消）[/dim]",
+            default=""
+        )
+        if target.strip().lower() == "c":
+            console.print("[yellow]已取消[/yellow]")
+        else:
+            console.print()
+            run_command(f"backup restore {server} {target}".strip())
+    elif choice == "4":
+        run_command(f"backup status {server}")
+    elif choice == "5":
+        run_command(f"backup cleanup {server}")
+    elif choice == "6":
+        run_command(f"backup schedule-start {server}")
+    elif choice == "7":
+        run_command(f"backup schedule-stop {server}")
+
     console.print()
     Prompt.ask("[dim]按 Enter 繼續[/dim]", default="")
 

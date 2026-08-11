@@ -38,7 +38,7 @@ class BackupPolicy:
     enabled: bool = True
     mode: BackupMode = BackupMode.MANUAL
     provider: BackupProvider = BackupProvider.INTERNAL
-    keep_last: int = 10  # 保留最近 N 個備份
+    keep_last: int = 5  # 保留最近 N 個備份
     keep_days: int = 14  # 保留最近 N 天的備份
     compression: str = "zip"
     include_patterns: List[str] = field(default_factory=list)
